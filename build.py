@@ -5,10 +5,10 @@ Both apps have to run from a file:// URL with no network and no dependencies,
 so the build is deliberately dumb: substitute each source into its template.
 The sources stay separate on disk purely so they can be unit tested under Node.
 
-  index.html  canvas 2D, no dependencies at all
-  three.html  same QR / palette / scene code, WebGL rendering, three.js
-              vendored inline (built with:
-              npx esbuild vendor/three-entry.js --bundle --format=iife --minify)
+  index.html   the primary build: WebGL via three.js, vendored inline
+               (npx esbuild vendor/three-entry.js --bundle --format=iife --minify)
+  canvas.html  the same QR / palette / scene code rendered with canvas 2D and
+               a painter's algorithm. No dependencies at all.
 """
 import os
 import sys
@@ -63,11 +63,12 @@ def build(template, parts, out_name):
 
 
 def main():
-    build("index.template.html", CANVAS_PARTS, "index.html")
+    build("index.template.html", CANVAS_PARTS, "canvas.html")
     if os.path.exists(os.path.join(VENDOR, "three.global.js")):
-        build("three.template.html", THREE_PARTS, "three.html")
+        build("three.template.html", THREE_PARTS, "index.html")
     else:
-        print("skipping three.html (vendor/three.global.js not built)")
+        print("skipping index.html (vendor/three.global.js not built);"
+              " canvas.html is still available")
     return 0
 
 

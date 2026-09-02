@@ -27,7 +27,8 @@ class Arboretum:
     def __init__(self, width=760, height=760, dpr=2, reduce_motion=False,
                  target="index.html"):
         self._pw = sync_playwright().start()
-        # SwiftShader keeps the WebGL build renderable in headless CI.
+        # SwiftShader keeps the WebGL build (the default target) renderable
+        # in headless CI.
         self._browser = self._pw.chromium.launch(args=[
             "--use-gl=angle", "--use-angle=swiftshader", "--enable-unsafe-swiftshader",
         ])

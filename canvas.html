@@ -1,0 +1,1947 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>QR Arboretum</title>
+<meta name="description" content="Grow a URL into an isometric voxel tree that reads as a scannable QR code from directly overhead.">
+<style>
+:root {
+  --paving: #edeae3;
+  --ink: #2a2620;
+  --muted: #7d766a;
+  --line: #d9d4c8;
+  --panel: #f6f4ef;
+  --focus: #3a4a7c;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: var(--paving);
+  color: var(--ink);
+  font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  -webkit-text-size-adjust: 100%;
+}
+
+#app {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  height: 100%;
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 14px;
+  gap: 12px;
+}
+
+header { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+
+h1 {
+  font-size: 15px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  margin: 0 8px 0 0;
+  white-space: nowrap;
+}
+
+h1 span { color: var(--muted); font-weight: 400; }
+
+#url {
+  flex: 1 1 260px;
+  min-width: 0;
+  padding: 9px 12px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: #fff;
+  color: inherit;
+  font: inherit;
+}
+
+#url:focus { outline: 2px solid var(--focus); outline-offset: 1px; border-color: transparent; }
+
+#stagewrap {
+  position: relative;
+  min-height: 0;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  overflow: hidden;
+  background: var(--paving);
+}
+
+#stage { display: block; cursor: pointer; touch-action: manipulation; }
+
+.hint {
+  position: absolute;
+  left: 12px; bottom: 10px;
+  font-size: 11px;
+  color: var(--muted);
+  background: rgba(246, 244, 239, 0.82);
+  padding: 3px 8px;
+  border-radius: 999px;
+  pointer-events: none;
+}
+
+footer { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
+
+#tabs { display: flex; gap: 4px; flex-wrap: wrap; }
+
+.tab {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  padding: 6px 11px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--panel);
+  color: var(--muted);
+  font: inherit;
+  cursor: pointer;
+  line-height: 1.25;
+}
+
+.tab .season { font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; }
+.tab .sp { font-size: 13px; font-weight: 600; color: var(--ink); }
+.tab.on { border-color: var(--ink); background: #fff; color: var(--ink); }
+.tab:focus-visible, .swatch:focus-visible, button:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+#swatches { display: flex; gap: 6px; }
+
+.swatch {
+  width: 26px; height: 26px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  box-shadow: 0 0 0 1px var(--line);
+  cursor: pointer;
+  padding: 0;
+}
+
+.swatch.on { border-color: var(--paving); box-shadow: 0 0 0 2px var(--ink); }
+
+.actions { display: flex; gap: 6px; margin-left: auto; }
+
+.actions button {
+  padding: 8px 13px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--panel);
+  color: var(--ink);
+  font: inherit;
+  font-weight: 550;
+  cursor: pointer;
+}
+
+.actions button:hover { background: #fff; border-color: var(--muted); }
+
+.readout {
+  flex: 1 0 100%;
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.readout.err { color: #9e3b58; font-weight: 600; }
+
+@media (max-width: 620px) {
+  #app { padding: 10px; gap: 9px; }
+  h1 { flex: 1 0 100%; }
+  .actions { margin-left: 0; flex: 1 0 100%; }
+  .actions button { flex: 1; }
+  .tab { padding: 5px 9px; }
+  .tab .sp { font-size: 12px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hint { display: none; }
+}
+
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1>QR Arboretum <span>— a URL, grown</span></h1>
+    <input id="url" type="url" spellcheck="false" autocomplete="off"
+           placeholder="https://example.com" aria-label="URL to encode">
+  </header>
+
+  <div id="stagewrap">
+    <canvas id="stage"></canvas>
+    <div class="hint">tap the plot to look straight down</div>
+  </div>
+
+  <footer>
+    <div id="tabs" role="group" aria-label="Season"></div>
+    <div id="swatches" role="group" aria-label="Foliage colour"></div>
+    <div class="actions">
+      <button id="flip" type="button">Flip to code</button>
+      <button id="png" type="button">PNG</button>
+    </div>
+    <div id="readout" class="readout"></div>
+  </footer>
+</div>
+
+<script>
+/* ===========================================================================
+   qr.js - QR Code encoder, written from scratch.
+   Byte mode only. Versions 1..20. ECC levels L / M / Q / H.
+
+   Structure follows ISO/IEC 18004. Block geometry is derived rather than
+   tabulated: only the EC-codewords-per-block and block-count tables are
+   literal, everything else (total codewords, short/long block split) falls
+   out of the function-pattern module count.
+
+   Works as a plain <script> (defines window.QR) and under Node.
+   =========================================================================== */
+(function (root, factory) {
+  var api = factory();
+  if (typeof module === 'object' && module.exports) module.exports = api;
+  else root.QR = api;
+})(typeof self !== 'undefined' ? self : this, function () {
+  'use strict';
+
+  // --- error correction levels -------------------------------------------
+  // .ord indexes the tables below; .bits is the 2-bit value baked into the
+  // format information (deliberately not the same order as .ord).
+  var ECL = {
+    L: { ord: 0, bits: 1 },
+    M: { ord: 1, bits: 0 },
+    Q: { ord: 2, bits: 3 },
+    H: { ord: 3, bits: 2 }
+  };
+
+  // ECC codewords per block, indexed [ecl.ord][version]. Index 0 unused.
+  var ECC_PER_BLOCK = [
+    [-1, 7, 10, 15, 20, 26, 18, 20, 24, 30, 18, 20, 24, 26, 30, 22, 24, 28, 30, 28, 28],
+    [-1, 10, 16, 26, 18, 24, 16, 18, 22, 22, 26, 30, 22, 22, 24, 24, 28, 28, 26, 26, 26],
+    [-1, 13, 22, 18, 26, 18, 24, 18, 22, 20, 24, 28, 26, 24, 20, 30, 24, 28, 28, 26, 30],
+    [-1, 17, 28, 22, 16, 22, 28, 26, 26, 24, 28, 24, 28, 22, 24, 24, 30, 28, 28, 26, 28]
+  ];
+
+  // Number of error correction blocks, indexed [ecl.ord][version].
+  var NUM_BLOCKS = [
+    [-1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 4, 4, 4, 4, 4, 6, 6, 6, 6, 7, 8],
+    [-1, 1, 1, 1, 2, 2, 4, 4, 4, 5, 5, 5, 8, 9, 9, 10, 10, 11, 13, 14, 16],
+    [-1, 1, 1, 2, 2, 4, 4, 6, 6, 8, 8, 8, 10, 12, 16, 12, 17, 16, 18, 21, 20],
+    [-1, 1, 1, 2, 4, 4, 4, 5, 6, 8, 8, 11, 11, 16, 16, 18, 16, 19, 21, 25, 25]
+  ];
+
+  var MIN_VERSION = 1, MAX_VERSION = 20;
+  var PENALTY_N1 = 3, PENALTY_N2 = 3, PENALTY_N3 = 40, PENALTY_N4 = 10;
+
+  // --- GF(256) arithmetic, primitive polynomial 0x11D, generator 2 --------
+  var GF_EXP = new Uint8Array(512);
+  var GF_LOG = new Uint8Array(256);
+  (function initGF() {
+    var x = 1;
+    for (var i = 0; i < 255; i++) {
+      GF_EXP[i] = x;
+      GF_LOG[x] = i;
+      x <<= 1;
+      if (x & 0x100) x ^= 0x11D;
+    }
+    for (var j = 255; j < 512; j++) GF_EXP[j] = GF_EXP[j - 255];
+  })();
+
+  function gfMul(a, b) {
+    if (a === 0 || b === 0) return 0;
+    return GF_EXP[GF_LOG[a] + GF_LOG[b]];
+  }
+
+  /* Reed-Solomon generator polynomial of the given degree.
+     g(x) = (x - a^0)(x - a^1) ... (x - a^(degree-1))
+
+     Coefficients run from the HIGHEST power down to x^0, with the leading
+     coefficient (always 1) omitted. Building this reversed is the classic
+     trap: at degree 1 the answer is the single element [1] either way, so the
+     mistake only surfaces at degree 2, where the correct result is [3, 2] and
+     the reversed one is [2, 3]. rsGeneratorSelfTest pins that case down. */
+  function rsGeneratorPoly(degree) {
+    var result = new Uint8Array(degree);
+    result[degree - 1] = 1;          // start as the polynomial "1"
+    var root = 1;                    // a^0
+    for (var i = 0; i < degree; i++) {
+      // multiply the accumulated polynomial by (x - root)
+      for (var j = 0; j < degree; j++) {
+        result[j] = gfMul(result[j], root);
+        if (j + 1 < degree) result[j] ^= result[j + 1];
+      }
+      root = gfMul(root, 2);
+    }
+    return result;
+  }
+
+  function rsRemainder(data, generator) {
+    var result = new Uint8Array(generator.length);
+    for (var i = 0; i < data.length; i++) {
+      var factor = data[i] ^ result[0];
+      result.copyWithin(0, 1);
+      result[result.length - 1] = 0;
+      for (var j = 0; j < result.length; j++) {
+        result[j] ^= gfMul(generator[j], factor);
+      }
+    }
+    return result;
+  }
+
+  // Exposed so the harness can assert the non-reversed ordering directly.
+  function rsGeneratorSelfTest() {
+    var d1 = rsGeneratorPoly(1);
+    var d2 = rsGeneratorPoly(2);
+    var d7 = rsGeneratorPoly(7);
+    return {
+      deg1: Array.from(d1),
+      deg2: Array.from(d2),
+      deg7: Array.from(d7),
+      ok: d1[0] === 1 && d2[0] === 3 && d2[1] === 2
+    };
+  }
+
+  // --- capacity ----------------------------------------------------------
+  // Data+ecc bits available once every function pattern is removed.
+  function numRawDataModules(ver) {
+    var size = ver * 4 + 17;
+    var result = size * size;
+    result -= 8 * 8 * 3;             // three finder patterns + separators
+    result -= 15 * 2 + 1;            // two format info strips + dark module
+    result -= (size - 16) * 2;       // timing patterns outside the finders
+    if (ver >= 2) {
+      var numAlign = Math.floor(ver / 7) + 2;
+      result -= (numAlign - 1) * (numAlign - 1) * 25;   // free-standing alignment
+      result -= (numAlign - 2) * 2 * 20;                // alignment over timing
+      if (ver >= 7) result -= 6 * 3 * 2;                // version info blocks
+    }
+    return result;
+  }
+
+  function numDataCodewords(ver, ecl) {
+    return Math.floor(numRawDataModules(ver) / 8)
+      - ECC_PER_BLOCK[ecl.ord][ver] * NUM_BLOCKS[ecl.ord][ver];
+  }
+
+  function charCountBits(ver) {
+    return ver <= 9 ? 8 : 16;        // byte mode, versions 1..26
+  }
+
+  function alignmentPatternPositions(ver) {
+    if (ver === 1) return [];
+    var numAlign = Math.floor(ver / 7) + 2;
+    var size = ver * 4 + 17;
+    var step = Math.ceil((ver * 4 + 4) / (numAlign * 2 - 2)) * 2;
+    var result = [6];
+    for (var pos = size - 7; result.length < numAlign; pos -= step) {
+      result.splice(1, 0, pos);
+    }
+    return result;
+  }
+
+  // --- bit buffer --------------------------------------------------------
+  function BitBuffer() { this.bits = []; }
+  BitBuffer.prototype.append = function (value, len) {
+    for (var i = len - 1; i >= 0; i--) this.bits.push((value >>> i) & 1);
+  };
+
+  function toUtf8(str) {
+    var out = [];
+    for (var i = 0; i < str.length; i++) {
+      var c = str.codePointAt(i);
+      if (c > 0xFFFF) i++;
+      if (c < 0x80) out.push(c);
+      else if (c < 0x800) out.push(0xC0 | (c >> 6), 0x80 | (c & 63));
+      else if (c < 0x10000) out.push(0xE0 | (c >> 12), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63));
+      else out.push(0xF0 | (c >> 18), 0x80 | ((c >> 12) & 63), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63));
+    }
+    return out;
+  }
+
+  // --- codeword assembly -------------------------------------------------
+  function buildCodewords(bytes, ver, ecl, padQuirk) {
+    var capacity = numDataCodewords(ver, ecl) * 8;
+    var bb = new BitBuffer();
+    bb.append(4, 4);                                  // byte mode indicator
+    bb.append(bytes.length, charCountBits(ver));
+    for (var i = 0; i < bytes.length; i++) bb.append(bytes[i], 8);
+    if (bb.bits.length > capacity) return null;
+
+    // terminator, then pad to a byte boundary, then alternating pad bytes
+    bb.append(0, Math.min(4, capacity - bb.bits.length));
+
+    /* padQuirk reproduces segno's write_padding_bits, which computes
+       8 - (length % 8) and so appends a whole spurious zero byte when the
+       stream is already byte-aligned. In byte mode the stream is
+       4 + count + 8n bits, which after a full 4-bit terminator is *always*
+       aligned - so segno always inserts that byte. Only the test harness sets
+       this, to prove the padding is the single point of divergence. */
+    if (padQuirk && bb.bits.length + 8 <= capacity) {
+      bb.append(0, 8 - bb.bits.length % 8);
+    } else {
+      bb.append(0, (8 - bb.bits.length % 8) % 8);
+    }
+
+    for (var pad = 0xEC; bb.bits.length < capacity; pad ^= 0xEC ^ 0x11) {
+      bb.append(pad, 8);
+    }
+
+    var dataCw = new Uint8Array(bb.bits.length / 8);
+    for (var k = 0; k < bb.bits.length; k++) {
+      dataCw[k >>> 3] |= bb.bits[k] << (7 - (k & 7));
+    }
+    return dataCw;
+  }
+
+  // Split into blocks, compute ECC, interleave.
+  function addEccAndInterleave(data, ver, ecl) {
+    var numBlocks = NUM_BLOCKS[ecl.ord][ver];
+    var blockEccLen = ECC_PER_BLOCK[ecl.ord][ver];
+    var rawCodewords = Math.floor(numRawDataModules(ver) / 8);
+    var numShortBlocks = numBlocks - rawCodewords % numBlocks;
+    var shortBlockLen = Math.floor(rawCodewords / numBlocks);
+
+    /* Every block is stored at the LONG block length, even the short ones.
+       A short block leaves a placeholder in its final data slot, which the
+       interleave loop below skips. Without that placeholder the ECC section
+       of a short block starts one index early, and the skip lands on a real
+       error correction codeword instead of the pad - the whole ECC run comes
+       out shifted by one and the symbol is quietly corrupt. */
+    var blockLen = shortBlockLen + 1;
+    var eccStart = blockLen - blockEccLen;
+    var blocks = [];
+    var gen = rsGeneratorPoly(blockEccLen);
+    for (var i = 0, k = 0; i < numBlocks; i++) {
+      var dlen = shortBlockLen - blockEccLen + (i < numShortBlocks ? 0 : 1);
+      var dat = data.subarray(k, k + dlen);
+      k += dlen;
+      var block = new Uint8Array(blockLen);
+      block.set(dat, 0);
+      block.set(rsRemainder(dat, gen), eccStart);
+      blocks.push(block);
+    }
+
+    var result = new Uint8Array(rawCodewords);
+    var idx = 0;
+    for (var col = 0; col < blockLen; col++) {
+      for (var b = 0; b < numBlocks; b++) {
+        // skip the placeholder that short blocks carry in the last data column
+        if (col !== shortBlockLen - blockEccLen || b >= numShortBlocks) {
+          result[idx++] = blocks[b][col];
+        }
+      }
+    }
+    return result;
+  }
+
+  // --- matrix ------------------------------------------------------------
+  function QRCode(ver, ecl, dataCodewords, forcedMask) {
+    this.version = ver;
+    this.ecl = ecl;
+    this.size = ver * 4 + 17;
+    this.modules = [];
+    this.isFunction = [];
+    for (var y = 0; y < this.size; y++) {
+      this.modules.push(new Array(this.size).fill(false));
+      this.isFunction.push(new Array(this.size).fill(false));
+    }
+    this.drawFunctionPatterns();
+    this.drawCodewords(addEccAndInterleave(dataCodewords, ver, ecl));
+
+    var mask = forcedMask;
+    if (mask === undefined || mask === null || mask < 0) {
+      var minPenalty = Infinity;
+      for (var m = 0; m < 8; m++) {
+        this.applyMask(m);
+        this.drawFormatBits(m);
+        var p = this.penaltyScore();
+        if (p < minPenalty) { minPenalty = p; mask = m; }
+        this.applyMask(m);                              // undo (XOR is its own inverse)
+      }
+    }
+    this.mask = mask;
+    this.applyMask(mask);
+    this.drawFormatBits(mask);
+    this.isFunction = null;
+  }
+
+  QRCode.prototype.setFunctionModule = function (x, y, isDark) {
+    this.modules[y][x] = isDark;
+    this.isFunction[y][x] = true;
+  };
+
+  QRCode.prototype.drawFunctionPatterns = function () {
+    var size = this.size, i, j;
+    for (i = 0; i < size; i++) {
+      this.setFunctionModule(6, i, i % 2 === 0);        // vertical timing
+      this.setFunctionModule(i, 6, i % 2 === 0);        // horizontal timing
+    }
+    this.drawFinderPattern(3, 3);
+    this.drawFinderPattern(size - 4, 3);
+    this.drawFinderPattern(3, size - 4);
+
+    var alignPos = alignmentPatternPositions(this.version);
+    var n = alignPos.length;
+    for (i = 0; i < n; i++) {
+      for (j = 0; j < n; j++) {
+        // skip the three corners, occupied by finder patterns
+        if (!((i === 0 && j === 0) || (i === 0 && j === n - 1) || (i === n - 1 && j === 0))) {
+          this.drawAlignmentPattern(alignPos[i], alignPos[j]);
+        }
+      }
+    }
+    this.drawFormatBits(0);                              // placeholder
+    this.drawVersion();
+  };
+
+  QRCode.prototype.drawFinderPattern = function (cx, cy) {
+    for (var dy = -4; dy <= 4; dy++) {
+      for (var dx = -4; dx <= 4; dx++) {
+        var dist = Math.max(Math.abs(dx), Math.abs(dy));
+        var x = cx + dx, y = cy + dy;
+        if (x >= 0 && x < this.size && y >= 0 && y < this.size) {
+          this.setFunctionModule(x, y, dist !== 2 && dist !== 4);
+        }
+      }
+    }
+  };
+
+  QRCode.prototype.drawAlignmentPattern = function (cx, cy) {
+    for (var dy = -2; dy <= 2; dy++) {
+      for (var dx = -2; dx <= 2; dx++) {
+        this.setFunctionModule(cx + dx, cy + dy, Math.max(Math.abs(dx), Math.abs(dy)) !== 1);
+      }
+    }
+  };
+
+  QRCode.prototype.drawFormatBits = function (mask) {
+    var data = (this.ecl.bits << 3) | mask;              // 5 bits
+    var rem = data;
+    for (var i = 0; i < 10; i++) rem = (rem << 1) ^ ((rem >>> 9) * 0x537);
+    var bits = ((data << 10) | rem) ^ 0x5412;           // 15 bits
+
+    var i2;
+    for (i2 = 0; i2 <= 5; i2++) this.setFunctionModule(8, i2, getBit(bits, i2));
+    this.setFunctionModule(8, 7, getBit(bits, 6));
+    this.setFunctionModule(8, 8, getBit(bits, 7));
+    this.setFunctionModule(7, 8, getBit(bits, 8));
+    for (i2 = 9; i2 < 15; i2++) this.setFunctionModule(14 - i2, 8, getBit(bits, i2));
+
+    for (i2 = 0; i2 < 8; i2++) this.setFunctionModule(this.size - 1 - i2, 8, getBit(bits, i2));
+    for (i2 = 8; i2 < 15; i2++) this.setFunctionModule(8, this.size - 15 + i2, getBit(bits, i2));
+    this.setFunctionModule(8, this.size - 8, true);      // always-dark module
+  };
+
+  QRCode.prototype.drawVersion = function () {
+    if (this.version < 7) return;
+    var rem = this.version;
+    for (var i = 0; i < 12; i++) rem = (rem << 1) ^ ((rem >>> 11) * 0x1F25);
+    var bits = (this.version << 12) | rem;               // 18 bits
+
+    for (var j = 0; j < 18; j++) {
+      var bit = getBit(bits, j);
+      var a = this.size - 11 + j % 3;
+      var b = Math.floor(j / 3);
+      this.setFunctionModule(a, b, bit);
+      this.setFunctionModule(b, a, bit);
+    }
+  };
+
+  QRCode.prototype.drawCodewords = function (data) {
+    var i = 0;                                           // bit index
+    for (var right = this.size - 1; right >= 1; right -= 2) {
+      if (right === 6) right = 5;                        // column 6 is the timing pattern
+      for (var vert = 0; vert < this.size; vert++) {
+        for (var j = 0; j < 2; j++) {
+          var x = right - j;
+          var upward = ((right + 1) & 2) === 0;
+          var y = upward ? this.size - 1 - vert : vert;
+          if (!this.isFunction[y][x] && i < data.length * 8) {
+            this.modules[y][x] = getBit(data[i >>> 3], 7 - (i & 7));
+            i++;
+          }
+          // remainder bits past the data stream stay light
+        }
+      }
+    }
+  };
+
+  QRCode.prototype.applyMask = function (mask) {
+    for (var y = 0; y < this.size; y++) {
+      for (var x = 0; x < this.size; x++) {
+        var invert;
+        switch (mask) {
+          case 0: invert = (x + y) % 2 === 0; break;
+          case 1: invert = y % 2 === 0; break;
+          case 2: invert = x % 3 === 0; break;
+          case 3: invert = (x + y) % 3 === 0; break;
+          case 4: invert = (Math.floor(x / 3) + Math.floor(y / 2)) % 2 === 0; break;
+          case 5: invert = x * y % 2 + x * y % 3 === 0; break;
+          case 6: invert = (x * y % 2 + x * y % 3) % 2 === 0; break;
+          case 7: invert = ((x + y) % 2 + x * y % 3) % 2 === 0; break;
+          default: throw new Error('bad mask');
+        }
+        if (!this.isFunction[y][x] && invert) {
+          this.modules[y][x] = !this.modules[y][x];
+        }
+      }
+    }
+  };
+
+  // --- penalty scoring ---------------------------------------------------
+  QRCode.prototype.penaltyScore = function () {
+    var result = 0, size = this.size, x, y;
+
+    // Rule 1 (plus rule 3, which rides the same run scan).
+    for (y = 0; y < size; y++) {
+      var runColor = false, runX = 0, runHistory = [0, 0, 0, 0, 0, 0, 0];
+      for (x = 0; x < size; x++) {
+        if (this.modules[y][x] === runColor) {
+          runX++;
+          if (runX === 5) result += PENALTY_N1;
+          else if (runX > 5) result++;
+        } else {
+          this.finderPenaltyAddHistory(runX, runHistory);
+          if (!runColor) result += this.finderPenaltyCountPatterns(runHistory) * PENALTY_N3;
+          runColor = this.modules[y][x];
+          runX = 1;
+        }
+      }
+      result += this.finderPenaltyTerminateAndCount(runColor, runX, runHistory) * PENALTY_N3;
+    }
+    for (x = 0; x < size; x++) {
+      var runColorV = false, runY = 0, runHistoryV = [0, 0, 0, 0, 0, 0, 0];
+      for (y = 0; y < size; y++) {
+        if (this.modules[y][x] === runColorV) {
+          runY++;
+          if (runY === 5) result += PENALTY_N1;
+          else if (runY > 5) result++;
+        } else {
+          this.finderPenaltyAddHistory(runY, runHistoryV);
+          if (!runColorV) result += this.finderPenaltyCountPatterns(runHistoryV) * PENALTY_N3;
+          runColorV = this.modules[y][x];
+          runY = 1;
+        }
+      }
+      result += this.finderPenaltyTerminateAndCount(runColorV, runY, runHistoryV) * PENALTY_N3;
+    }
+
+    // Rule 2: 2x2 blocks of one colour.
+    for (y = 0; y < size - 1; y++) {
+      for (x = 0; x < size - 1; x++) {
+        var c = this.modules[y][x];
+        if (c === this.modules[y][x + 1] && c === this.modules[y + 1][x] && c === this.modules[y + 1][x + 1]) {
+          result += PENALTY_N2;
+        }
+      }
+    }
+
+    // Rule 4: proportion of dark modules away from 50%.
+    var dark = 0;
+    for (y = 0; y < size; y++) for (x = 0; x < size; x++) if (this.modules[y][x]) dark++;
+    var total = size * size;
+    var k = Math.ceil(Math.abs(dark * 20 - total * 10) / total) - 1;
+    result += k * PENALTY_N4;
+    return result;
+  };
+
+  /* Rule 3 support (the 1:1:3:1:1 finder lookalike).
+
+     The run-length history is a sliding window of seven runs advanced one run
+     at a time, so a given dark core is examined exactly once - the search is
+     non-overlapping. Modules outside the symbol count as light: the first run
+     of every line is inflated by `size`, and a virtual light run of `size` is
+     appended at the end. Both halves matter. Drop the border and edge-hugging
+     lookalikes go unpenalised; let the window overlap and one core gets scored
+     repeatedly. Either way mask selection drifts toward codes that real
+     scanners struggle with. */
+  QRCode.prototype.finderPenaltyAddHistory = function (currentRunLength, runHistory) {
+    if (runHistory[0] === 0) currentRunLength += this.size;   // leading light border
+    runHistory.pop();
+    runHistory.unshift(currentRunLength);
+  };
+
+  QRCode.prototype.finderPenaltyCountPatterns = function (runHistory) {
+    var n = runHistory[1];
+    var core = n > 0 && runHistory[2] === n && runHistory[3] === n * 3
+      && runHistory[4] === n && runHistory[5] === n;
+    return (core && runHistory[0] >= n * 4 && runHistory[6] >= n ? 1 : 0)
+      + (core && runHistory[6] >= n * 4 && runHistory[0] >= n ? 1 : 0);
+  };
+
+  QRCode.prototype.finderPenaltyTerminateAndCount = function (currentRunColor, currentRunLength, runHistory) {
+    if (currentRunColor) {                                    // close the dark run
+      this.finderPenaltyAddHistory(currentRunLength, runHistory);
+      currentRunLength = 0;
+    }
+    currentRunLength += this.size;                            // trailing light border
+    this.finderPenaltyAddHistory(currentRunLength, runHistory);
+    return this.finderPenaltyCountPatterns(runHistory);
+  };
+
+  function getBit(x, i) { return ((x >>> i) & 1) !== 0; }
+
+  // --- public entry point ------------------------------------------------
+  function encode(text, opts) {
+    opts = opts || {};
+    var eclName = (opts.ecl || 'M').toUpperCase();
+    var baseEcl = ECL[eclName];
+    if (!baseEcl) throw new Error('unknown ecc level: ' + eclName);
+    var ecl = baseEcl;
+    var bytes = typeof text === 'string' ? toUtf8(text) : Array.from(text);
+
+    var minVer = Math.max(MIN_VERSION, opts.minVersion || MIN_VERSION);
+    var maxVer = Math.min(MAX_VERSION, opts.maxVersion || MAX_VERSION);
+    var ver = null, dataCw = null;
+    for (var v = minVer; v <= maxVer; v++) {
+      var cw = buildCodewords(bytes, v, ecl, opts.padQuirk);
+      if (cw) { ver = v; dataCw = cw; break; }
+    }
+    if (ver === null) {
+      throw new Error('data too long for version ' + maxVer + ' at level ' + eclName +
+        ' (' + bytes.length + ' bytes)');
+    }
+
+    // Optionally raise the ECC level for free if the data still fits.
+    if (opts.boost) {
+      var order = ['L', 'M', 'Q', 'H'];
+      for (var oi = order.length - 1; oi > baseEcl.ord; oi--) {
+        var better = ECL[order[oi]];
+        var cw2 = buildCodewords(bytes, ver, better, opts.padQuirk);
+        if (cw2) { ecl = better; dataCw = cw2; break; }
+      }
+    }
+
+    var qr = new QRCode(ver, ecl, dataCw, opts.mask);
+    var eclName2 = Object.keys(ECL).filter(function (k) { return ECL[k] === ecl; })[0];
+    return {
+      version: qr.version,
+      size: qr.size,
+      mask: qr.mask,
+      ecl: eclName2,
+      modules: qr.modules,
+      get: function (x, y) {
+        return x >= 0 && y >= 0 && x < qr.size && y < qr.size ? qr.modules[y][x] : false;
+      }
+    };
+  }
+
+  return {
+    encode: encode,
+    MIN_VERSION: MIN_VERSION,
+    MAX_VERSION: MAX_VERSION,
+    _internal: {
+      rsGeneratorPoly: rsGeneratorPoly,
+      rsGeneratorSelfTest: rsGeneratorSelfTest,
+      numRawDataModules: numRawDataModules,
+      numDataCodewords: numDataCodewords,
+      alignmentPatternPositions: alignmentPatternPositions,
+      ECL: ECL,
+      debugCodewords: function (text, ver, eclName, padQuirk) {
+        var ecl = ECL[eclName];
+        var bytes = toUtf8(text);
+        var d = buildCodewords(bytes, ver, ecl, padQuirk);
+        return { data: Array.from(d), final: Array.from(addEccAndInterleave(d, ver, ecl)) };
+      }
+    }
+  };
+});
+
+</script>
+<script>
+/* ===========================================================================
+   palette.js - colour, and the contrast floor that governs it.
+
+   The whole diorama is a QR code seen from above, so every surface that can
+   land on a dark module competes with the paving for a scanner's attention.
+   WCAG-style relative luminance contrast is the working proxy: anything that
+   can sit over a dark module must clear MIN_RATIO against the paving colour.
+
+   That floor is not a style guide, it is a hard constraint, and it forces
+   colours well below what looks natural on screen. Pastel sakura pink is
+   about 1.9:1 against pale paving and simply will not scan; the sakura here
+   is a deep rose because arithmetic says so, not because anyone preferred it.
+
+   Two further rules keep the two colour families from converging:
+     - a surface that can sit on a DARK module may only ever be varied DARKER
+     - a surface on PAVING may only ever be varied LIGHTER
+   Violate those and the render still looks fine while the code quietly dies.
+
+   Side faces are exempt. They are never visible from straight overhead, so
+   they can carry colour the code could not survive on its top faces - that is
+   what lets the gum have near-white bark.
+   =========================================================================== */
+(function (root, factory) {
+  var api = factory();
+  if (typeof module === 'object' && module.exports) module.exports = api;
+  else root.Palette = api;
+})(typeof self !== 'undefined' ? self : this, function () {
+  'use strict';
+
+  var MIN_RATIO = 3.0;          // contrast floor for anything over a dark module
+
+  // --- colour maths ------------------------------------------------------
+  function parseHex(hex) {
+    var h = hex.replace('#', '');
+    if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
+    return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
+  }
+
+  function toHex(rgb) {
+    return '#' + rgb.map(function (v) {
+      var c = Math.max(0, Math.min(255, Math.round(v))).toString(16);
+      return c.length === 1 ? '0' + c : c;
+    }).join('');
+  }
+
+  function srgbToLinear(c) {
+    c /= 255;
+    return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+  }
+
+  function luminance(hex) {
+    var p = parseHex(hex);
+    return 0.2126 * srgbToLinear(p[0]) + 0.7152 * srgbToLinear(p[1]) + 0.0722 * srgbToLinear(p[2]);
+  }
+
+  function contrast(a, b) {
+    var la = luminance(a), lb = luminance(b);
+    var hi = Math.max(la, lb), lo = Math.min(la, lb);
+    return (hi + 0.05) / (lo + 0.05);
+  }
+
+  // Multiply toward black. Only ever used on dark-module surfaces.
+  function darken(hex, amount) {
+    var p = parseHex(hex);
+    var k = 1 - amount;
+    return toHex([p[0] * k, p[1] * k, p[2] * k]);
+  }
+
+  // Blend toward white. Only ever used on paving.
+  function lighten(hex, amount) {
+    var p = parseHex(hex);
+    return toHex([
+      p[0] + (255 - p[0]) * amount,
+      p[1] + (255 - p[1]) * amount,
+      p[2] + (255 - p[2]) * amount
+    ]);
+  }
+
+  /* Darken until the colour clears the floor against `paving`. Returns the
+     colour plus whether it had to move, so the UI/tests can report which
+     choices the contrast floor overrode rather than silently "fixing" them. */
+  function enforceContrast(hex, paving, minRatio) {
+    minRatio = minRatio || MIN_RATIO;
+    var out = hex, steps = 0;
+    while (contrast(out, paving) < minRatio && steps < 60) {
+      out = darken(out, 0.05);
+      steps++;
+    }
+    return { hex: out, forced: steps > 0, steps: steps, ratio: contrast(out, paving) };
+  }
+
+  // --- ground ------------------------------------------------------------
+  // Paving is the light module and also the canvas background, so the 4-module
+  // quiet zone is the same colour as the light paving and reads as margin.
+  var PAVING = '#EDEAE3';
+  /* Soil sits near 5:1 rather than the near-black 10:1 it is tempting to
+     reach for. The ground layer alone reproduces the matrix, so the instinct
+     is to make it as dark as possible - but 5:1 already clears the floor with
+     two-thirds of headroom to spare, and it reads as earth instead of ink. */
+  var SOIL = '#746249';
+  var GRASS = '#4A6B36';
+  var SLAB_SIDE = '#6E6152';  // never seen from overhead
+
+  /* Six foliage swatches. Every one of these is darker than its natural-looking
+     counterpart because it has to clear MIN_RATIO on its top face. The `wanted`
+     field records the colour a designer would reach for, so the report can show
+     exactly how far the floor pushed each one. */
+  var SWATCHES = [
+    { id: 'rose', name: 'Rose', wanted: '#F8C8DC', hex: '#9E3B58' },
+    { id: 'jade', name: 'Jade', wanted: '#7BC47F', hex: '#2F6B3C' },
+    { id: 'amber', name: 'Amber', wanted: '#F2B441', hex: '#8A5312' },
+    { id: 'indigo', name: 'Indigo', wanted: '#8FA8DE', hex: '#3A4A7C' },
+    { id: 'plum', name: 'Plum', wanted: '#C79BE0', hex: '#5D3570' },
+    { id: 'moss', name: 'Moss', wanted: '#AFC46B', hex: '#4A5A22' }
+  ];
+
+  // Per-species surfaces that are not the swatch colour.
+  var SPECIES_COLOURS = {
+    sakura: { barkTop: '#4A3328', barkSide: '#7A5A46' },
+    oak:    { barkTop: '#3E2F22', barkSide: '#6B513A' },
+    // The gum is the reason side faces are worth treating separately: a dark
+    // top face keeps the code alive while near-white sides read as the pale
+    // ribboned bark the tree is known for.
+    gum:    { barkTop: '#413B30', barkSide: '#E4DED2' },
+    willow: { barkTop: '#3A3B2E', barkSide: '#6E6A55' }
+  };
+
+  /* Build the full colour set for a species + swatch, with every dark-module
+     surface pushed through the contrast floor. */
+  function build(speciesId, swatchId) {
+    var swatch = SWATCHES.filter(function (s) { return s.id === swatchId; })[0] || SWATCHES[0];
+    var sp = SPECIES_COLOURS[speciesId] || SPECIES_COLOURS.oak;
+    var forced = [];
+
+    function gate(label, hex) {
+      var r = enforceContrast(hex, PAVING);
+      if (r.forced) forced.push({ label: label, from: hex, to: r.hex, ratio: r.ratio });
+      return r.hex;
+    }
+
+    var pal = {
+      paving: PAVING,
+      soil: gate('soil', SOIL),
+      slabSide: SLAB_SIDE,
+      foliageTop: gate('foliage', swatch.hex),
+      barkTop: gate('bark', sp.barkTop),
+      barkSide: sp.barkSide,          // side face: exempt from the floor
+      grassTop: gate('grass', GRASS),
+      swatch: swatch,
+      forced: forced
+    };
+    /* Side shading. Two tones per material, one per visible side face, so the
+       3-D view reads as volume.
+
+       Sides go DARKER than the top, which is the opposite of the first thing
+       you would try. The contrast floor has already forced every top face to
+       be dark; if the sides are then made lighter, every leaf reads as a dark
+       cap on a pale stalk and the crown looks like a field of mushrooms. Since
+       side faces are exempt from the floor, shading them down instead restores
+       ordinary top-lit form for free. The gum is the exception - its pale bark
+       is the whole point, so it keeps light sides. */
+    function sides(top, a, b) {
+      return { top: top, sideA: darken(top, a), sideB: darken(top, b) };
+    }
+    pal.mat = {
+      leaf: sides(pal.foliageTop, 0.16, 0.32),
+      grass: sides(pal.grassTop, 0.16, 0.32),
+      soil: sides(pal.soil, 0.16, 0.32),
+      bark: { top: pal.barkTop, sideA: pal.barkSide, sideB: darken(pal.barkSide, 0.16) }
+    };
+
+    /* Fallen blossom. Ground under the crown is carpeted with these rather
+       than left as bare soil: leaf cubes are smaller than their module, so
+       from overhead the gaps would show brown and the crown would read as
+       speckle on dirt instead of a solid block of colour. Both tones are
+       DARKER than the leaves above them, so they clear the floor by more
+       than the foliage does - the carpet costs nothing in contrast.
+
+       Together with the two side tones this is the five-tone ladder:
+         top 0   right -16%   fallen -24%   left -32%   fallen2 -34%  */
+    pal.mat.fallen = sides(darken(pal.foliageTop, 0.24), 0.16, 0.32);
+    pal.mat.fallen2 = sides(darken(pal.foliageTop, 0.34), 0.16, 0.32);
+    pal.foliageSide = pal.mat.leaf.sideA;
+    pal.grassSide = pal.mat.grass.sideA;
+    pal.soilSide = darken(pal.soil, 0.10);
+    return pal;
+  }
+
+  // Report every top-face colour against the floor. Used by the test harness
+  // and by the in-page contrast readout.
+  function audit() {
+    var rows = [];
+    function add(label, hex, exempt) {
+      rows.push({
+        label: label, hex: hex, ratio: contrast(hex, PAVING),
+        pass: exempt || contrast(hex, PAVING) >= MIN_RATIO, exempt: !!exempt
+      });
+    }
+    add('paving (reference)', PAVING, true);
+    add('soil', SOIL);
+    add('grass', GRASS);
+    SWATCHES.forEach(function (s) {
+      add('foliage ' + s.name, s.hex);
+      rows.push({
+        label: 'foliage ' + s.name + ' (natural choice, rejected)',
+        hex: s.wanted, ratio: contrast(s.wanted, PAVING),
+        pass: contrast(s.wanted, PAVING) >= MIN_RATIO, rejected: true
+      });
+    });
+    Object.keys(SPECIES_COLOURS).forEach(function (k) {
+      add(k + ' bark top', SPECIES_COLOURS[k].barkTop);
+      add(k + ' bark side (side face, exempt)', SPECIES_COLOURS[k].barkSide, true);
+    });
+    return rows;
+  }
+
+  return {
+    MIN_RATIO: MIN_RATIO,
+    PAVING: PAVING,
+    SOIL: SOIL,
+    SWATCHES: SWATCHES,
+    SPECIES_COLOURS: SPECIES_COLOURS,
+    luminance: luminance,
+    contrast: contrast,
+    darken: darken,
+    lighten: lighten,
+    enforceContrast: enforceContrast,
+    build: build,
+    audit: audit
+  };
+});
+
+</script>
+<script>
+/* ===========================================================================
+   scene.js - planting. Turns a QR matrix into a list of voxels.
+
+   THE CENTRAL RULE: every voxel above ground sits on a dark module. Nothing
+   else about the planting matters to the code, because darkness is a property
+   of (x, y) only - it does not vary with height. Two consequences shape all
+   four species:
+
+     - A vertical column planted on a dark cell is dark at every level, so
+       trunks and willow tendrils are never eroded.
+     - Anything that spreads in x/y - crowns, limbs, foliage - gets carved by
+       the matrix. That carving IS the look. Do not "repair" it.
+
+   Gaps in foliage are safe. A rule forcing foliage to fill its module would
+   turn every crown into a stack of crates. What the gaps must NOT show is
+   bare brown ground: see the fallen-blossom carpet in groundBlocks() below.
+
+   Every dark module becomes a RAISED block, never a flat tile. Flat tiles
+   make the plot read as ink printed on a floor; raised blocks make it read as
+   terrain the tree is growing out of.
+
+   A cube may be smaller than its module and offset within it, but must never
+   cross the edge - see place(), which is the only way voxels are created.
+
+   Dimensions are fractions of n, the matrix size, so a version 2 code and a
+   version 10 code grow trees of the same proportion.
+   =========================================================================== */
+(function (root, factory) {
+  var api = factory(
+    typeof require === 'function' ? require('./palette.js') : root.Palette
+  );
+  if (typeof module === 'object' && module.exports) module.exports = api;
+  else root.Scene = api;
+})(typeof self !== 'undefined' ? self : this, function (Palette) {
+  'use strict';
+
+  // --- deterministic randomness -----------------------------------------
+  // Same URL + species + swatch always grows the same tree.
+  function hashString(str) {
+    var h = 2166136261 >>> 0;
+    for (var i = 0; i < str.length; i++) {
+      h ^= str.charCodeAt(i);
+      h = Math.imul(h, 16777619) >>> 0;
+    }
+    return h >>> 0;
+  }
+
+  function mulberry32(seed) {
+    var a = seed >>> 0;
+    return function () {
+      a = (a + 0x6D2B79F5) >>> 0;
+      var t = a;
+      t = Math.imul(t ^ (t >>> 15), 1 | t);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  // Per-voxel phase for the wind, hashed from position so it is stable across
+  // frames and independent of draw order.
+  function phaseAt(x, y, z) {
+    var h = Math.imul(((x * 73856093) ^ (y * 19349663) ^ (z * 83492791)) >>> 0, 2654435761) >>> 0;
+    return (h / 4294967296) * Math.PI * 2;
+  }
+
+  // Stable per-module noise, for picking between tones without consuming the
+  // random sequence (so tone choice does not shift when density changes).
+  function cellNoise(x, y) {
+    var h = Math.imul(((x * 374761393) ^ (y * 668265263)) >>> 0, 1274126177) >>> 0;
+    return (h >>> 8) / 16777216;
+  }
+
+  // The slab spans SLAB_BOTTOM..SLAB_TOP; ground blocks are seated on its top
+  // face so no sliver of paving shows beneath them. Their bottom face is never
+  // drawn, so being coplanar with the slab top cannot z-fight.
+  var SLAB_BOTTOM = -1.5, SLAB_TOP = -0.02;
+
+  var SPECIES = [
+    { id: 'sakura', season: 'Spring', name: 'Sakura', fall: 'petals' },
+    { id: 'oak', season: 'Summer', name: 'Oak', fall: 'seeds' },
+    { id: 'gum', season: 'Autumn', name: 'Gum', fall: 'leaves' },
+    { id: 'willow', season: 'Winter', name: 'Willow', fall: 'snow' }
+  ];
+
+  /* --- the one voxel constructor ----------------------------------------
+     Places a box inside module (mx, my). `size` is the plan footprint as a
+     fraction of a module; the offset is chosen so the box is strictly inside
+     its module. Crossing a module edge would put dark pixels over a paving
+     module and corrupt the code, so the clamp here is load-bearing, not
+     defensive tidiness. */
+  function place(out, mx, my, z, size, height, mat, kind, rnd) {
+    size = Math.max(0.06, Math.min(1, size));
+    var slack = 1 - size;
+    var ox = slack > 0 ? rnd() * slack : 0;
+    var oy = slack > 0 ? rnd() * slack : 0;
+    out.push({
+      x: mx + ox, y: my + oy, z: z,
+      w: size, d: size, h: height,
+      top: mat.top, side: mat.sideA, sideA: mat.sideA, sideB: mat.sideB,
+      kind: kind,
+      phase: phaseAt(mx, my, Math.round(z * 4))
+    });
+  }
+
+  // --- helpers -----------------------------------------------------------
+  function makeDark(matrix) {
+    var n = matrix.length;
+    return function (mx, my) {
+      return mx >= 0 && my >= 0 && mx < n && my < n && matrix[my][mx];
+    };
+  }
+
+  // The dark cell nearest a target, so trunks land on solid ground.
+  function nearestDark(matrix, tx, ty) {
+    var n = matrix.length, best = null, bestD = Infinity;
+    for (var y = 0; y < n; y++) {
+      for (var x = 0; x < n; x++) {
+        if (!matrix[y][x]) continue;
+        var d = (x - tx) * (x - tx) + (y - ty) * (y - ty);
+        if (d < bestD) { bestD = d; best = [x, y]; }
+      }
+    }
+    return best || [Math.floor(n / 2), Math.floor(n / 2)];
+  }
+
+  /* A planting context. `claimed` records every module that ends up with
+     foliage overhead; groundBlocks() later carpets those with fallen blossom
+     instead of leaving them bare soil. */
+  function Ctx(matrix, pal, rnd) {
+    this.matrix = matrix;
+    this.n = matrix.length;
+    this.pal = pal;
+    this.rnd = rnd;
+    this.isDark = makeDark(matrix);
+    this.out = [];
+    this.claimed = [];
+    for (var i = 0; i < this.n; i++) this.claimed.push(new Array(this.n).fill(false));
+  }
+
+  Ctx.prototype.claim = function (mx, my) {
+    if (mx >= 0 && my >= 0 && mx < this.n && my < this.n) this.claimed[my][mx] = true;
+  };
+
+  /* Scatter foliage through an ellipsoid. Cells outside the matrix or on light
+     modules simply produce nothing - that is the carving. Several samples can
+     land in the same column at different heights, which gives the "several per
+     column at varied heights" texture. */
+  Ctx.prototype.cloud = function (cx, cy, cz, r, halfH, density, sizeLo, sizeHi) {
+    var rnd = this.rnd;
+    var count = Math.round(density * Math.PI * r * r);
+    for (var i = 0; i < count; i++) {
+      var ux, uy, uz, m;
+      do {
+        ux = rnd() * 2 - 1; uy = rnd() * 2 - 1; uz = rnd() * 2 - 1;
+        m = ux * ux + uy * uy + uz * uz;
+      } while (m > 1);
+      var mx = Math.floor(cx + ux * r), my = Math.floor(cy + uy * r);
+      if (!this.isDark(mx, my)) continue;
+      this.claim(mx, my);
+      var size = sizeLo + rnd() * (sizeHi - sizeLo);
+      // height close to the plan size: flat discs stack into visible gaps,
+      // roughly cubic leaves merge into a mass
+      place(this.out, mx, my, cz + uz * halfH, size, size * (0.95 + rnd() * 0.6),
+        this.pal.mat.leaf, 'leaf', rnd);
+    }
+  };
+
+  // A dome: the upper half of an ellipsoid.
+  Ctx.prototype.dome = function (cx, cy, cz, r, halfH, density, sizeLo, sizeHi) {
+    var rnd = this.rnd;
+    var count = Math.round(density * Math.PI * r * r);
+    for (var i = 0; i < count; i++) {
+      var ux, uy, uz, m;
+      do {
+        ux = rnd() * 2 - 1; uy = rnd() * 2 - 1; uz = rnd();
+        m = ux * ux + uy * uy + uz * uz;
+      } while (m > 1);
+      var mx = Math.floor(cx + ux * r), my = Math.floor(cy + uy * r);
+      if (!this.isDark(mx, my)) continue;
+      this.claim(mx, my);
+      var size = sizeLo + rnd() * (sizeHi - sizeLo);
+      place(this.out, mx, my, cz + uz * halfH, size, size * 1.05,
+        this.pal.mat.leaf, 'leaf', rnd);
+    }
+  };
+
+  Ctx.prototype.trunk = function (mx, my, z0, height, width) {
+    if (!this.isDark(mx, my)) return false;
+    // One column on a dark cell is dark at every height, so the trunk is
+    // always whole. Segmented so the wind shear reads along its length.
+    var seg = Math.max(0.6, height / 9);
+    for (var z = z0; z < z0 + height - 1e-6; z += seg) {
+      var h = Math.min(seg, z0 + height - z);
+      var size = width * (1 - 0.12 * (z - z0) / Math.max(1, height));
+      place(this.out, mx, my, z, size, h, this.pal.mat.bark, 'bark', this.rnd);
+    }
+    return true;
+  };
+
+  Ctx.prototype.limb = function (cx, cy, ang, len, z0, rise, w0) {
+    var steps = Math.max(3, Math.round(len * 1.8));
+    for (var k = 1; k <= steps; k++) {
+      var f = k / steps;
+      var mx = Math.floor(cx + Math.cos(ang) * len * f);
+      var my = Math.floor(cy + Math.sin(ang) * len * f);
+      if (!this.isDark(mx, my)) continue;
+      this.claim(mx, my);                       // limbs shade the ground too
+      place(this.out, mx, my, z0 + f * rise, w0 * (1 - 0.3 * f), 0.6,
+        this.pal.mat.bark, 'bark', this.rnd);
+    }
+  };
+
+  /* Willow tendril: narrow in plan, continuous in z. A scatter of cubes here
+     reads as a bush, not a hanging branch, so this is its own primitive - a
+     few tall jointed segments, each staying inside its module. */
+  Ctx.prototype.tendril = function (mx, my, zTop, length) {
+    if (!this.isDark(mx, my)) return;
+    this.claim(mx, my);
+    var rnd = this.rnd;
+    var joints = 2 + Math.floor(rnd() * 3);
+    var remaining = length, z = zTop;
+    for (var j = 0; j < joints && remaining > 0.3; j++) {
+      var segLen = j === joints - 1 ? remaining : remaining * (0.35 + rnd() * 0.4);
+      segLen = Math.min(segLen, remaining);
+      place(this.out, mx, my, z - segLen, 0.13 + rnd() * 0.09, segLen,
+        this.pal.mat.leaf, 'tendril', rnd);
+      z -= segLen;
+      remaining -= segLen;
+    }
+  };
+
+  /* Ground. Every dark module becomes a raised block.
+
+     Under the crown the block is coloured with fallen blossom rather than
+     soil. Leaves are smaller than their module, so without this the gaps
+     between them show brown from overhead and the crown reads as speckle on
+     dirt; with it the module reads solid - leaf cube where there is a leaf,
+     fallen petal where there is not, both in the same colour family. From the
+     isometric view it also gives the drift of petals under the tree.
+
+     Contrast is unaffected: both fallen tones are darker than the leaves
+     above them, so they clear the floor by more than the foliage does. */
+  Ctx.prototype.groundBlocks = function () {
+    var pal = this.pal, n = this.n, rnd = this.rnd;
+    for (var my = 0; my < n; my++) {
+      for (var mx = 0; mx < n; mx++) {
+        if (!this.matrix[my][mx]) continue;
+        var nz = cellNoise(mx, my);
+        var mat;
+        if (this.claimed[my][mx]) {
+          mat = nz > 0.5 ? pal.mat.fallen : pal.mat.fallen2;
+        } else {
+          // brown soil where the crown does not reach, grass elsewhere
+          mat = nz > 0.45 ? pal.mat.grass : pal.mat.soil;
+        }
+        place(this.out, mx, my, SLAB_TOP, 1, 0.26 + nz * 0.14, mat, 'ground', rnd);
+      }
+    }
+  };
+
+  // --- species -----------------------------------------------------------
+
+  /* Spring. Short trunk, broad crown of several overlapping puffs at
+     staggered heights - deliberately flat and layered rather than one ball,
+     which is what separates its silhouette from the oak. Proportioned so the
+     crown top lands near 0.51 n: a crown at 0.35 n reads as a shrub on a
+     large empty plaza however good the foliage is. */
+  function plantSakura(c, n, cx, cy) {
+    var rnd = c.rnd;
+    var trunkH = n * 0.20;
+    var R = n * 0.30 * 0.98;
+    c.trunk(cx, cy, 0, trunkH, 0.46);
+
+    c.cloud(cx + 0.5, cy + 0.5, trunkH + n * 0.19, R, n * 0.115, 2.4, 0.34, 0.56);
+    for (var i = 0; i < 4; i++) {
+      var a = (i / 4) * Math.PI * 2 + rnd() * 0.5;
+      c.cloud(cx + 0.5 + Math.cos(a) * R * 0.60,
+              cy + 0.5 + Math.sin(a) * R * 0.60,
+              trunkH + n * (0.12 + rnd() * 0.07),
+              R * 0.66, n * 0.10, 2.4, 0.34, 0.56);
+    }
+    c.cloud(cx + 0.5, cy + 0.5, trunkH + n * 0.31, R * 0.54, n * 0.085, 2.4, 0.30, 0.50);
+  }
+
+  /* Summer. Thick trunk, heavy forking limbs, deep rounded crown - taller and
+     lumpier than the sakura. */
+  function plantOak(c, n, cx, cy) {
+    var rnd = c.rnd;
+    var trunkH = n * 0.24;
+    var R = n * 0.30;
+    c.trunk(cx, cy, 0, trunkH, 0.70);
+    c.trunk(cx + 1, cy, 0, trunkH * 0.7, 0.42);
+    c.trunk(cx, cy + 1, 0, trunkH * 0.7, 0.42);
+
+    var limbs = 5 + Math.floor(rnd() * 2);
+    for (var i = 0; i < limbs; i++) {
+      c.limb(cx + 0.5, cy + 0.5, (i / limbs) * Math.PI * 2 + rnd() * 0.6,
+        R * (0.5 + rnd() * 0.4), trunkH * 0.62, n * 0.09, 0.48);
+    }
+    c.cloud(cx + 0.5, cy + 0.5, trunkH + n * 0.20, R, n * 0.20, 2.4, 0.38, 0.62);
+    for (var j = 0; j < 4; j++) {
+      var a = (j / 4) * Math.PI * 2 + rnd() * 0.7;
+      c.cloud(cx + 0.5 + Math.cos(a) * R * 0.55,
+              cy + 0.5 + Math.sin(a) * R * 0.55,
+              trunkH + n * (0.16 + rnd() * 0.12),
+              R * 0.62, n * 0.15, 2.4, 0.38, 0.62);
+    }
+  }
+
+  /* Autumn. Tall pale trunk, bare for most of its height, then a sparse open
+     crown of scattered clumps with big gaps between them. The near-white bark
+     lives entirely on the side faces - see palette.js. */
+  function plantGum(c, n, cx, cy) {
+    var rnd = c.rnd;
+    var trunkH = n * 0.42;
+    c.trunk(cx, cy, 0, trunkH, 0.42);
+
+    var clumps = 8 + Math.floor(rnd() * 3);
+    for (var i = 0; i < clumps; i++) {
+      var a = rnd() * Math.PI * 2;
+      var rad = (0.05 + rnd() * 0.20) * n;
+      c.cloud(cx + 0.5 + Math.cos(a) * rad,
+              cy + 0.5 + Math.sin(a) * rad,
+              trunkH * (0.80 + rnd() * 0.36),
+              n * 0.11, n * 0.075, 3.4, 0.30, 0.50);
+    }
+    for (var b = 0; b < 3; b++) {
+      c.limb(cx + 0.5, cy + 0.5, rnd() * Math.PI * 2, n * 0.10,
+        trunkH * 0.86, n * 0.05, 0.28);
+    }
+  }
+
+  /* Winter. A dome of foliage with long jointed tendrils falling from beneath
+     its outer rim, nearly to the ground. */
+  function plantWillow(c, n, cx, cy) {
+    var rnd = c.rnd;
+    var trunkH = n * 0.22;
+    var R = n * 0.29;
+    var domeZ = trunkH + n * 0.13;
+    c.trunk(cx, cy, 0, trunkH, 0.54);
+    c.dome(cx + 0.5, cy + 0.5, domeZ, R, n * 0.16, 5.2, 0.34, 0.56);
+
+    var strands = Math.round(n * 1.4);
+    for (var t = 0; t < strands; t++) {
+      var a = rnd() * Math.PI * 2;
+      var r = R * (0.60 + rnd() * 0.42);
+      var top = domeZ - n * 0.01;
+      c.tendril(Math.floor(cx + 0.5 + Math.cos(a) * r),
+                Math.floor(cy + 0.5 + Math.sin(a) * r),
+                top, Math.max(1.0, top - (0.02 + rnd() * 0.07) * n));
+    }
+  }
+
+  var PLANTERS = {
+    sakura: plantSakura, oak: plantOak, gum: plantGum, willow: plantWillow
+  };
+
+  function build(opts) {
+    var matrix = opts.matrix;
+    var n = matrix.length;
+    var pal = Palette.build(opts.species, opts.swatch);
+    var rnd = mulberry32(hashString(opts.seed + '|' + opts.species + '|' + opts.swatch));
+    var c = new Ctx(matrix, pal, rnd);
+
+    var centre = nearestDark(matrix, (n - 1) / 2, (n - 1) / 2);
+    // Plant first, so groundBlocks knows which modules are under the crown.
+    (PLANTERS[opts.species] || plantOak)(c, n, centre[0], centre[1]);
+    var canopy = c.out.length;
+    c.groundBlocks();
+
+    var maxZ = 0, claimedCount = 0;
+    for (var i = 0; i < c.out.length; i++) maxZ = Math.max(maxZ, c.out[i].z + c.out[i].h);
+    for (var y = 0; y < n; y++) for (var x = 0; x < n; x++) if (c.claimed[y][x]) claimedCount++;
+
+    return {
+      matrix: matrix, n: n, palette: pal, voxels: c.out, maxZ: maxZ,
+      centre: centre, species: opts.species,
+      stats: {
+        total: c.out.length,
+        canopy: canopy,
+        ground: c.out.length - canopy,
+        claimed: claimedCount,
+        heightFraction: maxZ / n
+      }
+    };
+  }
+
+  return {
+    SPECIES: SPECIES,
+    SLAB_BOTTOM: SLAB_BOTTOM,
+    SLAB_TOP: SLAB_TOP,
+    build: build,
+    hashString: hashString,
+    mulberry32: mulberry32,
+    phaseAt: phaseAt
+  };
+});
+
+</script>
+<script>
+/* ===========================================================================
+   render.js - axonometric voxel renderer on canvas 2D.
+
+   ORIGIN CONVENTION (read before touching the slab): world coordinates are
+   module units, and every box is given by its MINIMUM corner plus extents.
+   There is no implicit half-module shift anywhere in this file. The full-plot
+   slab is therefore exactly (0, 0) to (n, n). If a -0.5 shift is ever added to
+   the drawing code, the slab's own x/y must cancel it, or the slab juts past
+   two edges of the plot and eats into the quiet zone.
+
+   DRAW ORDER, and why it is not one sorted list:
+     1. Canvas is flooded with the paving colour, so the quiet zone is light.
+     2. The base slab is drawn FIRST, outside the sort. It spans the whole plot
+        and sits under every block, so no single depth key can order it against
+        them - a centre-point key puts it in the middle of the run and it
+        paints over the back half of the ground.
+     3. Steps 1-2 are cached to an offscreen canvas and redrawn only when the
+        camera or palette changes. Wind forces a full repaint of the sorted
+        list every frame, so the cache still earns its place.
+     4. Everything else - including the dark modules, which are raised blocks
+        rather than flat tiles - is depth sorted and painted back to front.
+        Raised blocks genuinely overlap what stands on them, so unlike flat
+        tiles they cannot be painted wholesale ahead of the sort.
+
+   WIND: amplitude is scaled by (1 - t)^2, so it reaches exactly zero in the
+   code view - any horizontal sway there would slide leaves off their modules
+   and break the code. Each voxel is SHEARED between its base and its top
+   rather than translated, so trees bend instead of sliding. Displacement grows
+   as height^1.4 with a per-voxel phase hashed from position.
+   =========================================================================== */
+(function (root, factory) {
+  var api = factory(typeof require === 'function' ? require('./palette.js') : root.Palette);
+  if (typeof module === 'object' && module.exports) module.exports = api;
+  else root.Render = api;
+})(typeof self !== 'undefined' ? self : this, function (Palette) {
+  'use strict';
+
+  var DEG = Math.PI / 180;
+  var YAW_START = 45 * DEG, YAW_END = 0;
+  // atan(1/sqrt(2)) is the true isometric elevation, where the three axes
+  // foreshorten equally.
+  var PITCH_START = Math.atan(1 / Math.SQRT2), PITCH_END = 90 * DEG;
+  var QUIET = 4;                  // modules of quiet zone in the code view
+  var SLAB_BOTTOM = -1.5, SLAB_TOP = -0.02;   // slab spans these, in module units
+  var EPS_FACE = 1e-6;            // below this a face is edge-on: do not draw
+  var EPS_AREA = 1e-4;            // projected area floor, catches degenerate quads
+  var WIND_FREQ = 0.0011;
+  var WIND_AMP = 0.020;
+  var WIND_DIR = [0.82, 0.57];
+
+  function easeInOutCubic(t) {
+    return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+  }
+
+  /* --- camera ------------------------------------------------------------
+     `e` is eased flip progress in [0, 1]. At e = 1 the yaw and the pitch
+     cosine are snapped to exact zero rather than left as 6e-17, so the code
+     view is exactly a plan view and the wind term is exactly zero. */
+  function makeCamera(n, maxZ, e, W, H) {
+    var atEnd = e >= 1;
+    var yaw = atEnd ? 0 : YAW_START + (YAW_END - YAW_START) * e;
+    var pitch = atEnd ? PITCH_END : PITCH_START + (PITCH_END - PITCH_START) * e;
+    var cy = atEnd ? 1 : Math.cos(yaw);
+    var sy = atEnd ? 0 : Math.sin(yaw);
+    var cp = atEnd ? 0 : Math.cos(pitch);
+    var sp = atEnd ? 1 : Math.sin(pitch);
+
+    // Projected bounds of the scene's bounding volume, at unit scale.
+    var minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    for (var i = 0; i < 8; i++) {
+      var x = (i & 1) ? n : 0;
+      var y = (i & 2) ? n : 0;
+      var z = (i & 4) ? maxZ : SLAB_BOTTOM;
+      var vx = x * cy - y * sy;
+      var vy = x * sy + y * cy;
+      var px = vx, py = vy * sp - z * cp;
+      if (px < minX) minX = px;
+      if (px > maxX) maxX = px;
+      if (py < minY) minY = py;
+      if (py > maxY) maxY = py;
+    }
+    var extent = Math.max(maxX - minX, maxY - minY);
+    // Margin lands on exactly QUIET modules at e = 1, where extent is exactly n.
+    var margin = 2 + (QUIET - 2) * e;
+    var scale = Math.min(W, H) / (extent + margin * 2);
+
+    return {
+      e: e, yaw: yaw, pitch: pitch, cy: cy, sy: sy, cp: cp, sp: sp,
+      scale: scale,
+      ox: W / 2 - (minX + maxX) / 2 * scale,
+      oy: H / 2 - (minY + maxY) / 2 * scale,
+      n: n,
+      // Only the top face survives a plan view; both side normals go edge-on.
+      showSideY: cy * cp > EPS_FACE,
+      showSideX: sy * cp > EPS_FACE
+    };
+  }
+
+  function projX(cam, x, y) { return (x * cam.cy - y * cam.sy) * cam.scale + cam.ox; }
+  function projY(cam, x, y, z) {
+    return ((x * cam.sy + y * cam.cy) * cam.sp - z * cam.cp) * cam.scale + cam.oy;
+  }
+
+  /* Horizontal displacement of the wind field at a given height. Zero at the
+     ground, so tiles and the slab never move and the ground cache stays valid.
+     Returns [0, 0] exactly when amp is 0. */
+  function windAt(z, phase, time, amp) {
+    if (amp === 0) return 0;
+    return amp * Math.pow(z > 0 ? z : 0, 1.4) * Math.sin(time * WIND_FREQ + phase);
+  }
+
+  function shoelace(pts) {
+    var a = 0;
+    for (var i = 0, j = pts.length - 2; i < pts.length; j = i, i += 2) {
+      a += (pts[j] * pts[i + 1]) - (pts[i] * pts[j + 1]);
+    }
+    return a / 2;
+  }
+
+  /* Collect the drawable faces of one box as flat [x0,y0,x1,y1,...] arrays.
+     Exposed (via collectFaces) so the test harness can sweep every link x
+     species x swatch combination for malformed geometry without rasterising. */
+  function boxFaces(out, cam, v, time, amp) {
+    var bd = windAt(v.z, v.phase, time, amp);
+    var td = windAt(v.z + v.h, v.phase, time, amp);
+    var bx = bd * WIND_DIR[0], by = bd * WIND_DIR[1];
+    var tx = td * WIND_DIR[0], ty = td * WIND_DIR[1];
+
+    var x0 = v.x, y0 = v.y, x1 = v.x + v.w, y1 = v.y + v.d;
+    var zb = v.z, zt = v.z + v.h;
+
+    // top face - always visible, and the only face that survives the plan view
+    var top = [
+      projX(cam, x0 + tx, y0 + ty), projY(cam, x0 + tx, y0 + ty, zt),
+      projX(cam, x1 + tx, y0 + ty), projY(cam, x1 + tx, y0 + ty, zt),
+      projX(cam, x1 + tx, y1 + ty), projY(cam, x1 + tx, y1 + ty, zt),
+      projX(cam, x0 + tx, y1 + ty), projY(cam, x0 + tx, y1 + ty, zt)
+    ];
+
+    if (cam.showSideY) {
+      out.push({ pts: [
+        projX(cam, x0 + bx, y0 + by), projY(cam, x0 + bx, y0 + by, zb),
+        projX(cam, x1 + bx, y0 + by), projY(cam, x1 + bx, y0 + by, zb),
+        projX(cam, x1 + tx, y0 + ty), projY(cam, x1 + tx, y0 + ty, zt),
+        projX(cam, x0 + tx, y0 + ty), projY(cam, x0 + tx, y0 + ty, zt)
+      ], col: v.sideA || v.side });
+    }
+    if (cam.showSideX) {
+      out.push({ pts: [
+        projX(cam, x0 + bx, y0 + by), projY(cam, x0 + bx, y0 + by, zb),
+        projX(cam, x0 + bx, y1 + by), projY(cam, x0 + bx, y1 + by, zb),
+        projX(cam, x0 + tx, y1 + ty), projY(cam, x0 + tx, y1 + ty, zt),
+        projX(cam, x0 + tx, y0 + ty), projY(cam, x0 + tx, y0 + ty, zt)
+      ], col: v.sideB || v.side });
+    }
+    out.push({ pts: top, col: v.top });
+  }
+
+  // Depth key. The far corner in plan, and the TOP of the box in z: in the
+  // plan view the visible surface is the top face, so the box whose top is
+  // highest must be painted last.
+  function depthKey(cam, v) {
+    var vy = (v.x + v.w) * cam.sy + (v.y + v.d) * cam.cy;
+    return vy * cam.cp - (v.z + v.h) * cam.sp;
+  }
+
+  function fillPoly(ctx, pts, col) {
+    ctx.beginPath();
+    ctx.moveTo(pts[0], pts[1]);
+    for (var i = 2; i < pts.length; i += 2) ctx.lineTo(pts[i], pts[i + 1]);
+    ctx.closePath();
+    ctx.fillStyle = col;
+    ctx.fill();
+  }
+
+  /* Ground: background flood, slab, paving, dark tiles. Nothing here moves in
+     the wind and nothing here overlaps, so the whole thing is one cacheable
+     image. */
+  function drawGround(ctx, scene, cam, W, H) {
+    var pal = scene.palette, n = scene.n;
+    ctx.save();
+    ctx.fillStyle = pal.paving;
+    ctx.fillRect(0, 0, W, H);
+
+    /* --- slab, first and outside the sort -------------------------------
+       It spans the whole plot and sits under every block, so no single depth
+       key can order it against them - a centre-point key puts it in the middle
+       of the run and it paints over the back half of the ground.
+
+       Exactly (0,0)-(n,n): no half-module shift is applied anywhere in this
+       file. If one is ever added, the slab's own x/y must cancel it or the
+       slab juts past two edges and eats the quiet zone.
+
+       The dark modules themselves are NOT drawn here. They are raised blocks,
+       which genuinely overlap what stands on them, so they live in the sorted
+       voxel list like everything else. That leaves this cache holding just the
+       background flood and one box - still worth keeping, since wind forces a
+       full repaint of the sorted list every frame. */
+    var slab = { x: 0, y: 0, z: SLAB_BOTTOM, w: n, d: n, h: SLAB_TOP - SLAB_BOTTOM,
+                 phase: 0, top: pal.paving, side: pal.slabSide,
+                 sideA: pal.slabSide, sideB: Palette.darken(pal.slabSide, 0.14) };
+    var faces = [];
+    boxFaces(faces, cam, slab, 0, 0);
+    for (var f = 0; f < faces.length; f++) {
+      if (Math.abs(shoelace(faces[f].pts)) > EPS_AREA) fillPoly(ctx, faces[f].pts, faces[f].col);
+    }
+
+    ctx.restore();
+  }
+
+  // Faces of every standing voxel, depth sorted, ready to paint.
+  function collectFaces(scene, cam, time, amp) {
+    var vox = scene.voxels;
+    var order = new Array(vox.length);
+    for (var i = 0; i < vox.length; i++) order[i] = i;
+    order.sort(function (a, b) { return depthKey(cam, vox[b]) - depthKey(cam, vox[a]); });
+
+    var faces = [];
+    for (var k = 0; k < order.length; k++) boxFaces(faces, cam, vox[order[k]], time, amp);
+    return faces;
+  }
+
+  function drawVoxels(ctx, scene, cam, time, amp) {
+    var faces = collectFaces(scene, cam, time, amp);
+    for (var i = 0; i < faces.length; i++) {
+      var f = faces[i];
+      if (Math.abs(shoelace(f.pts)) <= EPS_AREA) continue;   // edge-on or degenerate
+      fillPoly(ctx, f.pts, f.col);
+    }
+    return faces.length;
+  }
+
+  return {
+    DEG: DEG, QUIET: QUIET, SLAB_BOTTOM: SLAB_BOTTOM, SLAB_TOP: SLAB_TOP,
+    WIND_AMP: WIND_AMP, WIND_FREQ: WIND_FREQ, WIND_DIR: WIND_DIR,
+    EPS_AREA: EPS_AREA,
+    easeInOutCubic: easeInOutCubic,
+    makeCamera: makeCamera,
+    projX: projX, projY: projY,
+    windAt: windAt,
+    shoelace: shoelace,
+    boxFaces: boxFaces,
+    depthKey: depthKey,
+    collectFaces: collectFaces,
+    drawGround: drawGround,
+    drawVoxels: drawVoxels,
+    fillPoly: fillPoly
+  };
+});
+
+</script>
+<script>
+/* ===========================================================================
+   app.js - UI, animation, export.
+   =========================================================================== */
+(function () {
+  'use strict';
+
+  var DEFAULT_URL = 'https://github.com/nguyenhanhatminh0105-hue';
+  var FLIP_MS = 950;
+
+  var reduceMotion = window.matchMedia &&
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  var state = {
+    text: DEFAULT_URL,
+    species: 'sakura',
+    swatch: 'rose',
+    t: 0,                  // raw flip progress 0..1
+    target: 0,
+    scene: null,
+    qr: null,
+    error: null
+  };
+
+  var canvas, ctx, dpr = 1, W = 0, H = 0;
+  var ground = null, groundKey = '';
+  var particles = [];
+  var startTime = performance.now();
+
+  // --- scene ------------------------------------------------------------
+  function rebuild() {
+    try {
+      state.qr = QR.encode(state.text || DEFAULT_URL, { ecl: 'M' });
+      state.error = null;
+    } catch (e) {
+      state.error = e.message;
+      return;
+    }
+    state.scene = Scene.build({
+      matrix: state.qr.modules,
+      seed: state.text,
+      species: state.species,
+      swatch: state.swatch
+    });
+    state.scene.id = [state.text, state.species, state.swatch].join('|');
+    seedParticles();
+    groundKey = '';
+    updateReadout();
+  }
+
+  function seedParticles() {
+    particles = [];
+    if (reduceMotion) return;
+    var n = state.scene.n, maxZ = state.scene.maxZ;
+    var rnd = Scene.mulberry32(Scene.hashString(state.scene.id + '#p'));
+    var count = Math.round(70);
+    for (var i = 0; i < count; i++) {
+      particles.push({
+        x: rnd() * n, y: rnd() * n,
+        z: rnd() * maxZ,
+        fall: 0.6 + rnd() * 1.1,
+        drift: rnd() * Math.PI * 2,
+        size: 0.16 + rnd() * 0.16,
+        top: maxZ
+      });
+    }
+  }
+
+  // --- drawing ----------------------------------------------------------
+  function ensureGround(scene, cam) {
+    var key = [scene.id, cam.e.toFixed(5), W, H, dpr].join('|');
+    if (key === groundKey && ground) return ground;
+    if (!ground) ground = document.createElement('canvas');
+    if (ground.width !== canvas.width || ground.height !== canvas.height) {
+      ground.width = canvas.width;
+      ground.height = canvas.height;
+    }
+    var gctx = ground.getContext('2d');
+    gctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    gctx.clearRect(0, 0, W, H);
+    Render.drawGround(gctx, scene, cam, W, H);
+    groundKey = key;
+    return ground;
+  }
+
+  function drawParticles(ctx2, scene, cam, time, fade) {
+    if (fade <= 0 || reduceMotion) return;
+    var maxZ = scene.maxZ, n = scene.n;
+    var pal = scene.palette;
+    ctx2.save();
+    ctx2.globalAlpha = fade * 0.85;
+    for (var i = 0; i < particles.length; i++) {
+      var p = particles[i];
+      // fall and recycle; purely decorative, never touches the code
+      var z = p.top - ((time * 0.001 * p.fall + p.drift) % 1) * (p.top + 1);
+      var sway = Math.sin(time * 0.0016 + p.drift) * 0.5;
+      var x = p.x + sway, y = p.y + sway * 0.4;
+      if (x < 0 || y < 0 || x > n || y > n) continue;
+      var sx = Render.projX(cam, x, y);
+      var sy = Render.projY(cam, x, y, z);
+      var s = p.size * cam.scale;
+      ctx2.fillStyle = pal.foliageSide;
+      ctx2.fillRect(sx - s / 2, sy - s / 2, s, s);
+    }
+    ctx2.restore();
+  }
+
+  function frame() {
+    var now = performance.now();
+    var time = now - startTime;
+
+    // advance the flip
+    if (state.t !== state.target) {
+      var step = (now - (frame.last || now)) / (reduceMotion ? 1 : FLIP_MS);
+      if (state.target > state.t) state.t = Math.min(state.target, state.t + step);
+      else state.t = Math.max(state.target, state.t - step);
+    }
+    frame.last = now;
+
+    if (state.scene) {
+      var e = Render.easeInOutCubic(state.t);
+      var scene = state.scene;
+      var cam = Render.makeCamera(scene.n, scene.maxZ, e, W, H);
+      // (1 - t)^2: wind is exactly zero in the code view, so nothing has moved
+      // off its module by the time the matrix has to read.
+      var amp = reduceMotion ? 0 : Render.WIND_AMP * (1 - e) * (1 - e);
+
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.drawImage(ensureGround(scene, cam), 0, 0, W, H);
+      Render.drawVoxels(ctx, scene, cam, time, amp);
+      drawParticles(ctx, scene, cam, time, Math.max(0, 1 - e / 0.6));
+    }
+    requestAnimationFrame(frame);
+  }
+
+  // --- layout -----------------------------------------------------------
+  function resize() {
+    var rect = canvas.parentNode.getBoundingClientRect();
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    W = Math.max(240, Math.floor(rect.width));
+    H = Math.max(240, Math.floor(rect.height));
+    canvas.style.width = W + 'px';
+    canvas.style.height = H + 'px';
+    canvas.width = Math.floor(W * dpr);
+    canvas.height = Math.floor(H * dpr);
+    groundKey = '';
+  }
+
+  // --- UI ---------------------------------------------------------------
+  function updateReadout() {
+    var el = document.getElementById('readout');
+    if (!el) return;
+    if (state.error) { el.textContent = state.error; el.className = 'readout err'; return; }
+    var q = state.qr;
+    var pal = state.scene.palette;
+    var ratio = Palette.contrast(pal.foliageTop, pal.paving).toFixed(1);
+    var soil = Palette.contrast(pal.soil, pal.paving).toFixed(1);
+    el.className = 'readout';
+    el.textContent = 'version ' + q.version + '  ·  ' + q.size + '×' + q.size +
+      '  ·  ecc ' + q.ecl + '  ·  mask ' + q.mask +
+      '  ·  ' + state.scene.voxels.length + ' voxels' +
+      '  ·  soil ' + soil + ':1, foliage ' + ratio + ':1 vs paving';
+  }
+
+  function exportPNG() {
+    var scale = 2;
+    var off = document.createElement('canvas');
+    off.width = W * scale; off.height = H * scale;
+    var octx = off.getContext('2d');
+    octx.setTransform(scale, 0, 0, scale, 0, 0);
+    var e = Render.easeInOutCubic(state.t);
+    var cam = Render.makeCamera(state.scene.n, state.scene.maxZ, e, W, H);
+    var amp = Render.WIND_AMP * (1 - e) * (1 - e);
+    Render.drawGround(octx, state.scene, cam, W, H);
+    Render.drawVoxels(octx, state.scene, cam, performance.now() - startTime, amp);
+    var a = document.createElement('a');
+    a.download = 'qr-arboretum-' + state.species + '.png';
+    a.href = off.toDataURL('image/png');
+    a.click();
+  }
+
+  function bind() {
+    canvas = document.getElementById('stage');
+    ctx = canvas.getContext('2d');
+
+    var input = document.getElementById('url');
+    input.value = state.text;
+    var deb;
+    input.addEventListener('input', function () {
+      clearTimeout(deb);
+      deb = setTimeout(function () { state.text = input.value.trim(); rebuild(); }, 220);
+    });
+
+    Scene.SPECIES.forEach(function (sp) {
+      var b = document.createElement('button');
+      b.className = 'tab' + (sp.id === state.species ? ' on' : '');
+      b.dataset.id = sp.id;
+      b.innerHTML = '<span class="season">' + sp.season + '</span><span class="sp">' + sp.name + '</span>';
+      b.addEventListener('click', function () {
+        state.species = sp.id;
+        document.querySelectorAll('.tab').forEach(function (o) { o.classList.toggle('on', o.dataset.id === sp.id); });
+        rebuild();
+      });
+      document.getElementById('tabs').appendChild(b);
+    });
+
+    Palette.SWATCHES.forEach(function (s) {
+      var b = document.createElement('button');
+      b.className = 'swatch' + (s.id === state.swatch ? ' on' : '');
+      b.dataset.id = s.id;
+      b.style.background = s.hex;
+      b.title = s.name + ' — ' + Palette.contrast(s.hex, Palette.PAVING).toFixed(1) + ':1 vs paving';
+      b.setAttribute('aria-label', s.name);
+      b.addEventListener('click', function () {
+        state.swatch = s.id;
+        document.querySelectorAll('.swatch').forEach(function (o) { o.classList.toggle('on', o.dataset.id === s.id); });
+        rebuild();
+      });
+      document.getElementById('swatches').appendChild(b);
+    });
+
+    function toggle() { state.target = state.target > 0.5 ? 0 : 1; }
+    canvas.addEventListener('click', toggle);
+    document.getElementById('flip').addEventListener('click', toggle);
+    document.getElementById('png').addEventListener('click', exportPNG);
+
+    window.addEventListener('resize', resize);
+  }
+
+  // --- test hooks -------------------------------------------------------
+  // The harness drives the render deterministically through these.
+  window.__arb = {
+    setState: function (o) {
+      if (o.text !== undefined) state.text = o.text;
+      if (o.species) state.species = o.species;
+      if (o.swatch) state.swatch = o.swatch;
+      rebuild();
+      if (o.t !== undefined) { state.t = o.t; state.target = o.t; }
+      return { version: state.qr.version, size: state.qr.size, voxels: state.scene.voxels.length };
+    },
+    // Draw one frame at an explicit clock, bypassing rAF.
+    renderAt: function (t, clock) {
+      state.t = t; state.target = t;
+      var e = Render.easeInOutCubic(t);
+      var cam = Render.makeCamera(state.scene.n, state.scene.maxZ, e, W, H);
+      var amp = Render.WIND_AMP * (1 - e) * (1 - e);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.drawImage(ensureGround(state.scene, cam), 0, 0, W, H);
+      Render.drawVoxels(ctx, state.scene, cam, clock, amp);
+      return true;
+    },
+    faces: function (t, clock) {
+      var e = Render.easeInOutCubic(t);
+      var cam = Render.makeCamera(state.scene.n, state.scene.maxZ, e, W, H);
+      var amp = Render.WIND_AMP * (1 - e) * (1 - e);
+      return Render.collectFaces(state.scene, cam, clock, amp);
+    },
+    /* Geometry sweep, summarised in-page so the harness can cover every
+       link x season x swatch combination without shipping megabytes of
+       polygons over the CDP bridge. */
+    geomCheck: function (t, clock) {
+      var e = Render.easeInOutCubic(t);
+      var cam = Render.makeCamera(state.scene.n, state.scene.maxZ, e, W, H);
+      var amp = Render.WIND_AMP * (1 - e) * (1 - e);
+      var faces = Render.collectFaces(state.scene, cam, clock, amp);
+      var r = { voxels: state.scene.voxels.length, faces: faces.length,
+                nonFinite: 0, zeroArea: 0, badVertexCount: 0, minArea: Infinity,
+                zeroExtent: 0, outOfModule: 0, offDark: 0 };
+      for (var i = 0; i < faces.length; i++) {
+        var p = faces[i].pts;
+        if (p.length !== 8) { r.badVertexCount++; continue; }
+        for (var k = 0; k < 8; k++) if (!isFinite(p[k])) { r.nonFinite++; break; }
+        if (!faces[i].col) r.badVertexCount++;
+        var a = Math.abs(Render.shoelace(p));
+        if (a < r.minArea) r.minArea = a;
+        if (a <= Render.EPS_AREA) r.zeroArea++;
+      }
+      var vox = state.scene.voxels, m = state.qr.modules;
+      for (var j = 0; j < vox.length; j++) {
+        var v = vox[j];
+        if (!(v.w > 0) || !(v.d > 0) || !(v.h > 0)) r.zeroExtent++;
+        if (Math.floor(v.x) !== Math.floor(v.x + v.w - 1e-9) ||
+            Math.floor(v.y) !== Math.floor(v.y + v.d - 1e-9)) r.outOfModule++;
+        var my2 = Math.floor(v.y), mx2 = Math.floor(v.x);
+        if (!m[my2] || !m[my2][mx2]) r.offDark++;
+      }
+      if (r.minArea === Infinity) r.minArea = -1;
+      return r;
+    },
+    matrix: function () { return state.qr.modules.map(function (r) { return r.map(function (v) { return v ? 1 : 0; }); }); },
+    geom: function () {
+      var e = Render.easeInOutCubic(1);
+      var cam = Render.makeCamera(state.scene.n, state.scene.maxZ, e, W, H);
+      return { scale: cam.scale, ox: cam.ox, oy: cam.oy, n: state.scene.n, W: W, H: H, dpr: dpr };
+    },
+    audit: function () { return Palette.audit(); },
+    size: function () { return { W: W, H: H, dpr: dpr }; }
+  };
+
+  function init() {
+    bind();
+    resize();
+    rebuild();
+    requestAnimationFrame(frame);
+  }
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+  else init();
+})();
+
+</script>
+</body>
+</html>

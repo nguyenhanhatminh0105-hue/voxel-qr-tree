@@ -71,10 +71,12 @@ def aruco(img):
 def reconstruct(img, geom):
     """Rebuild the module matrix from rendered pixels.
 
-    Deliberately samples the image rather than asking the code what it drew:
-    an analytic check cannot see the slab, antialiasing, the half-pixel tile
-    inflation, or a voxel that overhangs its module, and would pass while the
-    real render fails.
+    Deliberately samples the image rather than asking the code what it drew.
+    An analytic check cannot see the slab, canvas antialiasing, a voxel that
+    overhangs its module, or a whole scene rendered mirrored - it would pass
+    while the real render fails. That last one is not hypothetical: it is
+    exactly how the WebGL handedness bug was caught, after every decode oracle
+    had already declared the render fine.
     """
     n, scale, ox, oy, dpr = geom["n"], geom["scale"], geom["ox"], geom["oy"], geom["dpr"]
     grey = (0.299 * img[..., 0] + 0.587 * img[..., 1] + 0.114 * img[..., 2])
@@ -112,7 +114,7 @@ def main():
     ap.add_argument("--quick", action="store_true", help="one link only")
     ap.add_argument("--cam-trials", type=int, default=3)
     ap.add_argument("--target", default="index.html",
-                    help="index.html (canvas 2D) or three.html (WebGL)")
+                    help="index.html (WebGL, primary) or canvas.html (canvas 2D)")
     args = ap.parse_args()
     links = LINKS[:1] if args.quick else LINKS
 

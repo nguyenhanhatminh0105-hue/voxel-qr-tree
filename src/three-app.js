@@ -5,26 +5,43 @@
    contrast floor and the planting rules are renderer-agnostic. Only drawing
    changes.
 
-   WHAT GOES AWAY IN 3-D. Three of the constraints that shape render.js are
-   artefacts of painter's-algorithm sorting, and a depth buffer simply erases
-   them:
-     - the full-plot slab no longer needs to be drawn outside a sort, because
-       there is no sort;
-     - ground tiles no longer need an offscreen cache, because nothing is
-       re-rasterised per frame that the GPU cannot redo for free;
-     - back-face culling is the GPU's job.
-   Only coplanar z-fighting replaces them, handled by lifting the tiles a
-   hair above the slab.
+   ORTHOGRAPHIC, NOT PERSPECTIVE - and this is not a tuning knob.
+   The whole trick depends on a voxel at height h landing on its own module
+   when seen from above. Under perspective it projects outward by
+   r * h / (D - h), where r is its horizontal distance from the view axis and
+   D the camera distance. For a voxel at r = 16, h = 18 that is 13 modules off
+   at D = 40, still 2.8 modules off at D = 120, and 0.3 modules off at
+   D = 1000. Pushing the camera away makes the error small, never zero, and
+   costs depth precision on the way. Orthographic is exactly 0.00 at any
+   distance.
 
-   WHAT DOES NOT GO AWAY. Every constraint that comes from the code itself
-   survives unchanged, and two need active defending here:
-     - MATERIALS ARE UNLIT. MeshBasicMaterial with baked vertex colours, no
-       lights in the scene. A directional light would scale the top-face
-       colours by an angle-dependent factor and quietly walk them back through
-       the contrast floor; baking the two-tone shading into vertex colours
-       keeps every surface exactly the audited value.
-     - WIND still decays to exactly zero at t = 1, and is still a shear
-       applied between each voxel's base and top.
+   WHAT GOES AWAY IN 3-D. Three constraints that shape render.js are artefacts
+   of painter's-algorithm sorting, and a depth buffer erases them:
+     - the full-plot slab no longer needs drawing outside a sort - it is just
+       one more instance;
+     - the ground no longer needs an offscreen cache;
+     - back-face culling is the GPU's job.
+   Only coplanar z-fighting replaces them, handled by the gap between the slab
+   top and the ground blocks seated on it.
+
+   WHAT DOES NOT GO AWAY, and needs active defending here:
+     - MATERIALS ARE UNLIT. MeshBasicMaterial with per-instance colour, and no
+       lights in the scene at all. Ordinary lighting does the exact opposite of
+       what this design needs: a light from above makes top faces the
+       BRIGHTEST, which pushes foliage back up through the 3:1 floor and makes
+       the code unscannable while still looking fine on screen. Here the top
+       face carries the base tone and the two sides are baked darker (-16% and
+       -32%), so every surface is exactly the audited value.
+     - WIND still decays to exactly zero at t = 1, still as a shear between
+       each voxel's base and top - baked into the instance matrix, which a 4x4
+       can express.
+
+   HANDEDNESS. render.js projects with x right, y DOWN and z toward the
+   viewer, a left-handed frame; three.js is right-handed. Feeding the same
+   coordinates to a right-handed camera renders the plot mirrored - and ZBar
+   decodes mirrored QR codes happily, so that passes a decode test while being
+   wrong. Y is negated when building instance matrices, and the camera basis is
+   built in that space. Winding is then reversed, so materials are DoubleSide.
    =========================================================================== */
 (function () {
   'use strict';
@@ -32,78 +49,50 @@
   var DEFAULT_URL = 'https://github.com/nguyenhanhatminh0105-hue';
   var FLIP_MS = 950;
   var DEG = Math.PI / 180;
-  var YAW_START = 45 * DEG, PITCH_START = 35 * DEG, PITCH_END = 90 * DEG;
-  var QUIET = 4, SLAB_H = 0.9;
+  var YAW_START = 45 * DEG;
+  // atan(1/sqrt(2)) is the true isometric elevation: all three axes
+  // foreshorten equally.
+  var PITCH_START = Math.atan(1 / Math.SQRT2), PITCH_END = 90 * DEG;
+  var QUIET = 4;
+  var SLAB_BOTTOM = -1.5, SLAB_TOP = -0.02;
   var WIND_AMP = 0.020, WIND_FREQ = 0.0011, WIND_DIR = [0.82, 0.57];
+  var EPS_FACE = 1e-6;
 
   var reduceMotion = window.matchMedia &&
     window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
   var state = { text: DEFAULT_URL, species: 'sakura', swatch: 'rose', t: 0, target: 0 };
-  var renderer, scene3, camera, treeMesh, groundMesh, petals;
-  var W = 0, H = 0, basePos = null, voxRef = null;
+  var renderer, scene3, camera, petals;
+  var meshes = [];            // [top, sideY, sideX] InstancedMesh
+  var boxes = null;           // voxels plus the slab, in draw order
+  var W = 0, H = 0;
   var startTime = performance.now();
 
   function easeInOutCubic(t) {
     return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
   }
 
-  // --- geometry ---------------------------------------------------------
-  // Only the three faces the camera can ever see, matching render.js: top,
-  // -x and -y. Yaw stays in [0, 45] and pitch in [35, 90], so the others are
-  // never front-facing.
-  /* HANDEDNESS. render.js projects with x right, y DOWN and z toward the
-     viewer, which is a left-handed frame; three.js is right-handed. Feeding
-     the same coordinates to a right-handed camera renders the whole plot
-     mirrored left-to-right - and ZBar happily decodes mirrored QR codes, so
-     this passes a decode test while being wrong. The fix is to negate Y when
-     writing vertices (three-space Y = -world y) and to build the camera basis
-     in that space. Faces are then wound backwards, so materials are
-     DoubleSide; with a depth buffer and opaque geometry that costs nothing. */
-  var FACES = [
-    { n: 'top', v: [[0, 0, 1], [1, 0, 1], [1, 1, 1], [0, 1, 1]], tone: 'top' },
-    { n: 'sy', v: [[0, 0, 0], [1, 0, 0], [1, 0, 1], [0, 0, 1]], tone: 'sideA' },
-    { n: 'sx', v: [[0, 0, 0], [0, 1, 0], [0, 1, 1], [0, 0, 1]], tone: 'sideB' }
+  /* --- base geometry ----------------------------------------------------
+     One quad per visible face of a unit box. Only three faces can ever face
+     the camera: yaw stays in [0, 45] and pitch in [35, 90], so +x, +y and the
+     underside are never front-facing. Each quad gets its own InstancedMesh so
+     it can carry its own exact per-instance colour - instanceColor is one
+     colour per instance, so three tones per box means three meshes. */
+  var FACE_QUADS = [
+    { key: 'top', tone: 'top', v: [[0, 0, 1], [1, 0, 1], [1, 1, 1], [0, 1, 1]] },
+    { key: 'sideY', tone: 'sideA', v: [[0, 0, 0], [1, 0, 0], [1, 0, 1], [0, 0, 1]] },
+    { key: 'sideX', tone: 'sideB', v: [[0, 0, 0], [0, 1, 0], [0, 1, 1], [0, 0, 1]] }
   ];
 
-  function boxGeometry(boxes) {
-    var count = boxes.length * FACES.length * 4;
-    var pos = new Float32Array(count * 3);
-    var col = new Float32Array(count * 3);
-    var idx = new (count > 65535 ? Uint32Array : Uint16Array)(boxes.length * FACES.length * 6);
-    var c = new THREE.Color();
-    var vi = 0, ii = 0;
-
-    for (var b = 0; b < boxes.length; b++) {
-      var box = boxes[b];
-      for (var f = 0; f < FACES.length; f++) {
-        var face = FACES[f];
-        c.set(box[face.tone] || box.top);
-        var base = vi;
-        for (var k = 0; k < 4; k++) {
-          var u = face.v[k];
-          pos[vi * 3] = box.x + u[0] * box.w;
-          pos[vi * 3 + 1] = -(box.y + u[1] * box.d);      // three-space Y = -world y
-          pos[vi * 3 + 2] = box.z + u[2] * box.h;
-          col[vi * 3] = c.r; col[vi * 3 + 1] = c.g; col[vi * 3 + 2] = c.b;
-          vi++;
-        }
-        idx[ii++] = base; idx[ii++] = base + 1; idx[ii++] = base + 2;
-        idx[ii++] = base; idx[ii++] = base + 2; idx[ii++] = base + 3;
-      }
-    }
+  function quadGeometry(v) {
     var g = new THREE.BufferGeometry();
+    var pos = new Float32Array(12);
+    for (var i = 0; i < 4; i++) {
+      pos[i * 3] = v[i][0]; pos[i * 3 + 1] = v[i][1]; pos[i * 3 + 2] = v[i][2];
+    }
     g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-    g.setAttribute('color', new THREE.BufferAttribute(col, 3));
-    g.setIndex(new THREE.BufferAttribute(idx, 1));
+    g.setIndex([0, 1, 2, 0, 2, 3]);
     return g;
-  }
-
-  function unlitMesh(geom) {
-    return new THREE.Mesh(geom, new THREE.MeshBasicMaterial({
-      vertexColors: true,           // unlit: colours stay exactly as audited
-      side: THREE.DoubleSide        // Y is negated, so winding is reversed
-    }));
   }
 
   // --- scene build ------------------------------------------------------
@@ -124,34 +113,38 @@
 
     var pal = state.scene.palette, n = state.scene.n;
 
-    if (treeMesh) { scene3.remove(treeMesh); treeMesh.geometry.dispose(); treeMesh.material.dispose(); }
-    if (groundMesh) { scene3.remove(groundMesh); groundMesh.geometry.dispose(); groundMesh.material.dispose(); }
+    meshes.forEach(function (m) {
+      scene3.remove(m); m.geometry.dispose(); m.material.dispose();
+    });
+    meshes = [];
 
-    // ground: slab plus one flat plate per dark module. The depth buffer
-    // orders these against everything standing on them, so there is no draw
-    // order to get wrong here.
-    var ground = [{
-      x: 0, y: 0, z: -SLAB_H, w: n, d: n, h: SLAB_H - 0.01,
-      top: pal.paving, sideA: pal.slabSide, sideB: Palette.darken(pal.slabSide, 0.14)
-    }];
-    for (var my = 0; my < n; my++) {
-      for (var mx = 0; mx < n; mx++) {
-        if (!state.qr.modules[my][mx]) continue;
-        var j = ((mx * 73856093) ^ (my * 19349663)) >>> 0;
-        var shade = ((j >>> 8) & 255) / 255 * 0.10;   // dark modules vary DARKER only
-        var soil = Palette.darken(pal.soil, shade);
-        ground.push({ x: mx, y: my, z: -0.01, w: 1, d: 1, h: 0.01,
-                      top: soil, sideA: soil, sideB: soil });
+    /* The slab is simply one more instance. In the canvas build it has to be
+       drawn first and outside the sort; here the depth buffer places it. */
+    boxes = state.scene.voxels.concat([{
+      x: 0, y: 0, z: SLAB_BOTTOM, w: n, d: n, h: SLAB_TOP - SLAB_BOTTOM,
+      phase: 0, top: pal.paving,
+      sideA: pal.slabSide, sideB: Palette.darken(pal.slabSide, 0.14)
+    }]);
+
+    var c = new THREE.Color();
+    FACE_QUADS.forEach(function (face) {
+      var mesh = new THREE.InstancedMesh(
+        quadGeometry(face.v),
+        new THREE.MeshBasicMaterial({ side: THREE.DoubleSide }),   // no lights, ever
+        boxes.length
+      );
+      mesh.frustumCulled = false;
+      for (var i = 0; i < boxes.length; i++) {
+        c.set(boxes[i][face.tone] || boxes[i].top);
+        mesh.setColorAt(i, c);
       }
-    }
-    groundMesh = unlitMesh(boxGeometry(ground));
-    scene3.add(groundMesh);
+      mesh.instanceColor.needsUpdate = true;
+      mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      meshes.push(mesh);
+      scene3.add(mesh);
+    });
 
-    treeMesh = unlitMesh(boxGeometry(state.scene.voxels));
-    basePos = treeMesh.geometry.attributes.position.array.slice();
-    voxRef = state.scene.voxels;
-    scene3.add(treeMesh);
-
+    applyWind(0, 0);
     buildPetals();
     updateReadout();
   }
@@ -161,52 +154,64 @@
     if (reduceMotion) return;
     var n = state.scene.n, maxZ = state.scene.maxZ;
     var rnd = Scene.mulberry32(Scene.hashString(state.scene.id + '#p'));
-    var count = 80;
+    var count = 90;
     var pos = new Float32Array(count * 3);
     var meta = [];
     for (var i = 0; i < count; i++) {
-      meta.push({ x: rnd() * n, y: rnd() * n, fall: 0.6 + rnd() * 1.1, drift: rnd() * 6.283, top: maxZ });
-      pos[i * 3] = meta[i].x; pos[i * 3 + 1] = -meta[i].y; pos[i * 3 + 2] = rnd() * maxZ;
+      meta.push({ x: rnd() * n, y: rnd() * n, fall: 0.6 + rnd() * 1.1,
+                  drift: rnd() * 6.283, top: maxZ });
+      pos[i * 3] = meta[i].x;
+      pos[i * 3 + 1] = -meta[i].y;               // three-space Y
+      pos[i * 3 + 2] = rnd() * maxZ;
     }
     var g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
     petals = new THREE.Points(g, new THREE.PointsMaterial({
-      color: new THREE.Color(state.scene.palette.foliageTop),
-      size: 0.3, sizeAttenuation: true, transparent: true
+      color: new THREE.Color(state.scene.palette.mat.leaf.sideA),
+      size: 0.42, sizeAttenuation: true, transparent: true
     }));
     petals.userData.meta = meta;
+    petals.frustumCulled = false;
     scene3.add(petals);
   }
 
-  // --- wind -------------------------------------------------------------
-  /* Shear every voxel between its base and its top. Amplitude carries the
-     (1 - t)^2 factor, so at t = 1 the offsets are exactly zero and every
-     vertex returns to its authored position - bit-identical whatever the
-     clock says. */
+  /* --- wind -------------------------------------------------------------
+     Shear baked straight into the instance matrix. For a box with corner
+     (x, y, z), extents (w, d, h) and horizontal displacement `lo` at its base
+     and `hi` at its top, local unit coords (u, v, t) map to
+
+       X = x + u*w + (lo + (hi-lo)*t) * dirX
+       Y = y + v*d + (lo + (hi-lo)*t) * dirY      (negated for three-space)
+       Z = z + t*h
+
+     which is exactly a 4x4 with the shear in the third column. The base stays
+     planted and the top leans, so the tree bends instead of sliding.
+
+     At amp = 0 both lo and hi are exactly zero and every matrix returns to its
+     authored value - bit-identical whatever the clock says. */
+  var _m = new THREE.Matrix4();
   function applyWind(time, amp) {
-    var attr = treeMesh.geometry.attributes.position;
-    var arr = attr.array;
-    if (amp === 0) {
-      arr.set(basePos);
-      attr.needsUpdate = true;
-      return;
-    }
-    var per = FACES.length * 4;
-    for (var b = 0; b < voxRef.length; b++) {
-      var v = voxRef[b];
-      var s = Math.sin(time * WIND_FREQ + v.phase);
-      var lo = amp * Math.pow(v.z > 0 ? v.z : 0, 1.4) * s;
-      var hi = amp * Math.pow(v.z + v.h > 0 ? v.z + v.h : 0, 1.4) * s;
-      for (var k = 0; k < per; k++) {
-        var i3 = (b * per + k) * 3;
-        // pick the base or top offset by which end of the box this vertex is on
-        var atTop = basePos[i3 + 2] > v.z + v.h * 0.5;
-        var d = atTop ? hi : lo;
-        arr[i3] = basePos[i3] + d * WIND_DIR[0];
-        arr[i3 + 1] = basePos[i3 + 1] - d * WIND_DIR[1];   // negated Y
+    if (!meshes.length) return;
+    var arrays = meshes.map(function (m) { return m.instanceMatrix.array; });
+    for (var b = 0; b < boxes.length; b++) {
+      var v = boxes[b];
+      var lo = 0, hi = 0;
+      if (amp !== 0) {
+        var s = Math.sin(time * WIND_FREQ + v.phase);
+        lo = amp * Math.pow(v.z > 0 ? v.z : 0, 1.4) * s;
+        var zt = v.z + v.h;
+        hi = amp * Math.pow(zt > 0 ? zt : 0, 1.4) * s;
       }
+      var kx = (hi - lo) * WIND_DIR[0], ky = (hi - lo) * WIND_DIR[1];
+      _m.set(
+        v.w, 0, kx, v.x + lo * WIND_DIR[0],
+        0, -v.d, -ky, -(v.y + lo * WIND_DIR[1]),      // three-space Y = -world y
+        0, 0, v.h, v.z,
+        0, 0, 0, 1
+      );
+      for (var k = 0; k < arrays.length; k++) _m.toArray(arrays[k], b * 16);
     }
-    attr.needsUpdate = true;
+    meshes.forEach(function (m) { m.instanceMatrix.needsUpdate = true; });
   }
 
   // --- camera -----------------------------------------------------------
@@ -221,16 +226,16 @@
     // projected extent of the bounding volume, exactly as render.js computes it
     var minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
     for (var i = 0; i < 8; i++) {
-      var x = (i & 1) ? n : 0, y = (i & 2) ? n : 0, z = (i & 4) ? maxZ : -SLAB_H;
-      var vx = x * cy - y * sy, vy = x * sy + y * cy;
-      var px = vx, py = vy * sp - z * cp;
+      var x = (i & 1) ? n : 0, y = (i & 2) ? n : 0, z = (i & 4) ? maxZ : SLAB_BOTTOM;
+      var px = x * cy - y * sy;
+      var py = (x * sy + y * cy) * sp - z * cp;
       if (px < minX) minX = px;
       if (px > maxX) maxX = px;
       if (py < minY) minY = py;
       if (py > maxY) maxY = py;
     }
     var extent = Math.max(maxX - minX, maxY - minY);
-    var margin = 2 + (QUIET - 2) * e;
+    var margin = 2 + (QUIET - 2) * e;       // exactly QUIET modules at e = 1
     var span = extent + margin * 2;
 
     var halfW, halfH;
@@ -238,33 +243,39 @@
     else { halfW = span / 2; halfH = halfW * (H / W); }
     camera.left = -halfW; camera.right = halfW;
     camera.top = halfH; camera.bottom = -halfH;
-    camera.near = -1000; camera.far = 1000;
+    camera.near = -2000; camera.far = 2000;
 
-    /* Camera basis in three-space (Y negated). Derived by matching render.js
-       term for term:  screen-right = d(sx)/d(pos),  screen-up = -d(sy)/d(pos).
+    /* Camera basis in three-space (Y negated), derived by matching render.js
+       term for term: screen-right = d(sx)/dpos, screen-up = -d(sy)/dpos.
        At e = 1 this puts the camera exactly overhead looking straight down. */
-    var Rt = [cy, sy, 0];                       // screen right
-    var Ut = [-sy * sp, cy * sp, cp];           // screen up
-    var Zt = [sy * cp, -cy * cp, sp];           // target -> camera
+    var Ut = [-sy * sp, cy * sp, cp];        // screen up
+    var Zt = [sy * cp, -cy * cp, sp];        // target -> camera
 
-    // Centre the projected bounding box: offset the target within the view plane.
-    var tz = (maxZ - SLAB_H) / 2;
+    // Centre the projected bounding box by offsetting the target in view plane.
+    var tz = (maxZ + SLAB_BOTTOM) / 2;
     var p0x = (n / 2) * cy - (n / 2) * sy;
     var p0y = ((n / 2) * sy + (n / 2) * cy) * sp - tz * cp;
     var dX = (minX + maxX) / 2 - p0x;
-    var dY = (minY + maxY) / 2 - p0y;           // screen-down units
-    var Rw = [cy, -sy, 0];                      // screen right, world
-    var Dw = [sy * sp, cy * sp, -cp];           // screen down, world
+    var dY = (minY + maxY) / 2 - p0y;        // screen-down units
+    var Rw = [cy, -sy, 0];                   // screen right, world
+    var Dw = [sy * sp, cy * sp, -cp];        // screen down, world
     var twx = n / 2 + Rw[0] * dX + Dw[0] * dY;
     var twy = n / 2 + Rw[1] * dX + Dw[1] * dY;
     var twz = tz + Rw[2] * dX + Dw[2] * dY;
 
-    var tx = twx, ty = -twy, tzz = twz;         // into three-space
-    var dist = 400;
+    var tx = twx, ty = -twy, tzz = twz;      // into three-space
+    var dist = 600;
     camera.position.set(tx + Zt[0] * dist, ty + Zt[1] * dist, tzz + Zt[2] * dist);
     camera.up.set(Ut[0], Ut[1], Ut[2]);
     camera.lookAt(tx, ty, tzz);
     camera.updateProjectionMatrix();
+
+    // Side faces go edge-on in the plan view; hide them rather than leaving
+    // sub-pixel slivers to antialias over the paving.
+    if (meshes.length === 3) {
+      meshes[1].visible = cy * cp > EPS_FACE;
+      meshes[2].visible = sy * cp > EPS_FACE;
+    }
     return { scale: W / (2 * halfW), halfW: halfW, halfH: halfH, n: n };
   }
 
@@ -277,7 +288,7 @@
     if (petals) {
       var fade = Math.max(0, 1 - e / 0.6);
       petals.visible = fade > 0;
-      petals.material.opacity = fade * 0.85;
+      petals.material.opacity = fade * 0.9;
       var p = petals.geometry.attributes.position, meta = petals.userData.meta;
       for (var i = 0; i < meta.length; i++) {
         var m = meta[i];
@@ -316,13 +327,14 @@
     var el = document.getElementById('readout');
     if (!el) return;
     if (state.error) { el.textContent = state.error; el.className = 'readout err'; return; }
-    var pal = state.scene.palette;
+    var pal = state.scene.palette, st = state.scene.stats;
     el.className = 'readout';
     el.textContent = 'three.js r' + THREE.REVISION + '  ·  version ' + state.qr.version +
       '  ·  ' + state.qr.size + '×' + state.qr.size + '  ·  ecc ' + state.qr.ecl +
-      '  ·  mask ' + state.qr.mask + '  ·  ' + state.scene.voxels.length + ' voxels' +
+      '  ·  mask ' + state.qr.mask + '  ·  ' + st.total + ' voxels (' + st.canopy +
+      ' canopy)  ·  height ' + Math.round(st.heightFraction * 100) + '% of plot' +
       '  ·  soil ' + Palette.contrast(pal.soil, pal.paving).toFixed(1) +
-      ':1, foliage ' + Palette.contrast(pal.foliageTop, pal.paving).toFixed(1) + ':1 vs paving';
+      ':1, foliage ' + Palette.contrast(pal.foliageTop, pal.paving).toFixed(1) + ':1';
   }
 
   function bind() {
@@ -379,7 +391,7 @@
     var wrap = document.getElementById('stagewrap');
     renderer = new THREE.WebGLRenderer({
       antialias: true,
-      preserveDrawingBuffer: true          // needed for PNG export and for the harness
+      preserveDrawingBuffer: true          // for PNG export and for the harness
     });
     renderer.setClearColor(new THREE.Color(Palette.PAVING), 1);   // quiet zone is paving
     renderer.domElement.id = 'stage';
@@ -387,7 +399,7 @@
 
     scene3 = new THREE.Scene();
     // No lights, by design - see the header comment.
-    camera = new THREE.OrthographicCamera(-1, 1, 1, -1, -1000, 1000);
+    camera = new THREE.OrthographicCamera(-1, 1, 1, -1, -2000, 2000);
     scene3.add(camera);
 
     bind();
@@ -405,7 +417,8 @@
       if (o.swatch) state.swatch = o.swatch;
       rebuild();
       if (o.t !== undefined) { state.t = o.t; state.target = o.t; }
-      return { version: state.qr.version, size: state.qr.size, voxels: state.scene.voxels.length };
+      return { version: state.qr.version, size: state.qr.size,
+               voxels: state.scene.voxels.length, stats: state.scene.stats };
     },
     renderAt: function (t, clock) { state.t = t; state.target = t; drawFrame(t, clock); return true; },
     matrix: function () {
@@ -413,7 +426,6 @@
     },
     geom: function () {
       var g = setCamera(easeInOutCubic(1));
-      // module (mx,my) centre -> css px: ox + (mx+0.5)*scale
       return {
         scale: g.scale, n: g.n, W: W, H: H,
         dpr: renderer.getPixelRatio(),
@@ -424,19 +436,22 @@
     geomCheck: function (t) {
       var r = { voxels: state.scene.voxels.length, faces: 0, nonFinite: 0, zeroArea: 0,
                 badVertexCount: 0, minArea: 1, zeroExtent: 0, outOfModule: 0, offDark: 0 };
-      var pos = treeMesh.geometry.attributes.position.array;
-      for (var i = 0; i < pos.length; i++) if (!isFinite(pos[i])) r.nonFinite++;
+      meshes.forEach(function (m) {
+        var a = m.instanceMatrix.array;
+        for (var i = 0; i < a.length; i++) if (!isFinite(a[i])) r.nonFinite++;
+      });
       r.faces = state.scene.voxels.length * (t >= 1 ? 1 : 3);
-      var vox = state.scene.voxels, m = state.qr.modules;
+      var vox = state.scene.voxels, m2 = state.qr.modules;
       for (var j = 0; j < vox.length; j++) {
         var v = vox[j];
         if (!(v.w > 0) || !(v.d > 0) || !(v.h > 0)) r.zeroExtent++;
         if (Math.floor(v.x) !== Math.floor(v.x + v.w - 1e-9) ||
             Math.floor(v.y) !== Math.floor(v.y + v.d - 1e-9)) r.outOfModule++;
-        if (!m[Math.floor(v.y)] || !m[Math.floor(v.y)][Math.floor(v.x)]) r.offDark++;
+        if (!m2[Math.floor(v.y)] || !m2[Math.floor(v.y)][Math.floor(v.x)]) r.offDark++;
       }
       return r;
     },
+    stats: function () { return state.scene.stats; },
     audit: function () { return Palette.audit(); },
     size: function () { return { W: W, H: H, dpr: renderer.getPixelRatio() }; }
   };
