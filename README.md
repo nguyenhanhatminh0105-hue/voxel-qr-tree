@@ -227,6 +227,16 @@ geometry checks      : 288 (no malformed faces)
    wind at t=0       : moving
 ```
 
+`three.html`, same sweep, WebGL through SwiftShader:
+
+```
+1. ZBar, clean       : 144/144 (100.0%)
+   cv2 Aruco         : 144/144 (100.0%)
+2. matrix from pixels: 144/144 (100.0%) exact, 0 modules differ
+3. through camera    : 432/432 (100.0%)
+4. wind at t=1       : bit-identical across 3 clocks
+```
+
 The checks are:
 
 1. **Decode clean.** ZBar on the code-view render.
