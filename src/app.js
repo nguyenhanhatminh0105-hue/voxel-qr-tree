@@ -77,7 +77,7 @@
     var gctx = ground.getContext('2d');
     gctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     gctx.clearRect(0, 0, W, H);
-    Render.drawGround(gctx, scene, cam, W, H, dpr);
+    Render.drawGround(gctx, scene, cam, W, H);
     groundKey = key;
     return ground;
   }
@@ -170,7 +170,7 @@
     var e = Render.easeInOutCubic(state.t);
     var cam = Render.makeCamera(state.scene.n, state.scene.maxZ, e, W, H);
     var amp = Render.WIND_AMP * (1 - e) * (1 - e);
-    Render.drawGround(octx, state.scene, cam, W, H, scale);
+    Render.drawGround(octx, state.scene, cam, W, H);
     Render.drawVoxels(octx, state.scene, cam, performance.now() - startTime, amp);
     var a = document.createElement('a');
     a.download = 'qr-arboretum-' + state.species + '.png';

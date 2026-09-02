@@ -11,13 +11,19 @@
      - Anything that spreads in x/y - crowns, limbs, foliage - gets carved by
        the matrix. That carving IS the look. Do not "repair" it.
 
-   Gaps in foliage are safe. The soil beneath a dark module already reproduces
-   that module at roughly 10:1 against the paving, which beats the foliage
-   itself at ~5:1. A rule forcing foliage to fill its module would buy nothing
-   and would turn every crown into a stack of crates.
+   Gaps in foliage are safe. A rule forcing foliage to fill its module would
+   turn every crown into a stack of crates. What the gaps must NOT show is
+   bare brown ground: see the fallen-blossom carpet in groundBlocks() below.
+
+   Every dark module becomes a RAISED block, never a flat tile. Flat tiles
+   make the plot read as ink printed on a floor; raised blocks make it read as
+   terrain the tree is growing out of.
 
    A cube may be smaller than its module and offset within it, but must never
    cross the edge - see place(), which is the only way voxels are created.
+
+   Dimensions are fractions of n, the matrix size, so a version 2 code and a
+   version 10 code grow trees of the same proportion.
    =========================================================================== */
 (function (root, factory) {
   var api = factory(
@@ -57,6 +63,18 @@
     return (h / 4294967296) * Math.PI * 2;
   }
 
+  // Stable per-module noise, for picking between tones without consuming the
+  // random sequence (so tone choice does not shift when density changes).
+  function cellNoise(x, y) {
+    var h = Math.imul(((x * 374761393) ^ (y * 668265263)) >>> 0, 1274126177) >>> 0;
+    return (h >>> 8) / 16777216;
+  }
+
+  // The slab spans SLAB_BOTTOM..SLAB_TOP; ground blocks are seated on its top
+  // face so no sliver of paving shows beneath them. Their bottom face is never
+  // drawn, so being coplanar with the slab top cannot z-fight.
+  var SLAB_BOTTOM = -1.5, SLAB_TOP = -0.02;
+
   var SPECIES = [
     { id: 'sakura', season: 'Spring', name: 'Sakura', fall: 'petals' },
     { id: 'oak', season: 'Summer', name: 'Oak', fall: 'seeds' },
@@ -73,8 +91,8 @@
   function place(out, mx, my, z, size, height, mat, kind, rnd) {
     size = Math.max(0.06, Math.min(1, size));
     var slack = 1 - size;
-    var ox = rnd() * slack;
-    var oy = rnd() * slack;
+    var ox = slack > 0 ? rnd() * slack : 0;
+    var oy = slack > 0 ? rnd() * slack : 0;
     out.push({
       x: mx + ox, y: my + oy, z: z,
       w: size, d: size, h: height,
@@ -105,195 +123,231 @@
     return best || [Math.floor(n / 2), Math.floor(n / 2)];
   }
 
+  /* A planting context. `claimed` records every module that ends up with
+     foliage overhead; groundBlocks() later carpets those with fallen blossom
+     instead of leaving them bare soil. */
+  function Ctx(matrix, pal, rnd) {
+    this.matrix = matrix;
+    this.n = matrix.length;
+    this.pal = pal;
+    this.rnd = rnd;
+    this.isDark = makeDark(matrix);
+    this.out = [];
+    this.claimed = [];
+    for (var i = 0; i < this.n; i++) this.claimed.push(new Array(this.n).fill(false));
+  }
+
+  Ctx.prototype.claim = function (mx, my) {
+    if (mx >= 0 && my >= 0 && mx < this.n && my < this.n) this.claimed[my][mx] = true;
+  };
+
   /* Scatter foliage through an ellipsoid. Cells outside the matrix or on light
      modules simply produce nothing - that is the carving. Several samples can
-     land in the same column at different heights, which is what gives the
-     "several per column at varied heights" texture. */
-  function cloud(out, isDark, cx, cy, cz, rx, ry, rz, count, pal, rnd, sizeLo, sizeHi) {
+     land in the same column at different heights, which gives the "several per
+     column at varied heights" texture. */
+  Ctx.prototype.cloud = function (cx, cy, cz, r, halfH, density, sizeLo, sizeHi) {
+    var rnd = this.rnd;
+    var count = Math.round(density * Math.PI * r * r);
     for (var i = 0; i < count; i++) {
-      // rejection-sample a point inside the unit sphere, then scale
       var ux, uy, uz, m;
       do {
         ux = rnd() * 2 - 1; uy = rnd() * 2 - 1; uz = rnd() * 2 - 1;
         m = ux * ux + uy * uy + uz * uz;
       } while (m > 1);
-      var px = cx + ux * rx, py = cy + uy * ry, pz = cz + uz * rz;
-      var mx = Math.floor(px), my = Math.floor(py);
-      if (!isDark(mx, my)) continue;
+      var mx = Math.floor(cx + ux * r), my = Math.floor(cy + uy * r);
+      if (!this.isDark(mx, my)) continue;
+      this.claim(mx, my);
       var size = sizeLo + rnd() * (sizeHi - sizeLo);
       // height close to the plan size: flat discs stack into visible gaps,
       // roughly cubic leaves merge into a mass
-      place(out, mx, my, pz, size, size * (0.95 + rnd() * 0.6), pal.mat.leaf, 'leaf', rnd);
+      place(this.out, mx, my, cz + uz * halfH, size, size * (0.95 + rnd() * 0.6),
+        this.pal.mat.leaf, 'leaf', rnd);
     }
-  }
+  };
 
-  function trunk(out, isDark, mx, my, z0, height, pal, rnd, width) {
-    if (!isDark(mx, my)) return false;
+  // A dome: the upper half of an ellipsoid.
+  Ctx.prototype.dome = function (cx, cy, cz, r, halfH, density, sizeLo, sizeHi) {
+    var rnd = this.rnd;
+    var count = Math.round(density * Math.PI * r * r);
+    for (var i = 0; i < count; i++) {
+      var ux, uy, uz, m;
+      do {
+        ux = rnd() * 2 - 1; uy = rnd() * 2 - 1; uz = rnd();
+        m = ux * ux + uy * uy + uz * uz;
+      } while (m > 1);
+      var mx = Math.floor(cx + ux * r), my = Math.floor(cy + uy * r);
+      if (!this.isDark(mx, my)) continue;
+      this.claim(mx, my);
+      var size = sizeLo + rnd() * (sizeHi - sizeLo);
+      place(this.out, mx, my, cz + uz * halfH, size, size * 1.05,
+        this.pal.mat.leaf, 'leaf', rnd);
+    }
+  };
+
+  Ctx.prototype.trunk = function (mx, my, z0, height, width) {
+    if (!this.isDark(mx, my)) return false;
     // One column on a dark cell is dark at every height, so the trunk is
     // always whole. Segmented so the wind shear reads along its length.
-    var seg = 0.8;
+    var seg = Math.max(0.6, height / 9);
     for (var z = z0; z < z0 + height - 1e-6; z += seg) {
       var h = Math.min(seg, z0 + height - z);
       var size = width * (1 - 0.12 * (z - z0) / Math.max(1, height));
-      place(out, mx, my, z, size, h, pal.mat.bark, 'bark', rnd);
+      place(this.out, mx, my, z, size, h, this.pal.mat.bark, 'bark', this.rnd);
     }
     return true;
-  }
+  };
+
+  Ctx.prototype.limb = function (cx, cy, ang, len, z0, rise, w0) {
+    var steps = Math.max(3, Math.round(len * 1.8));
+    for (var k = 1; k <= steps; k++) {
+      var f = k / steps;
+      var mx = Math.floor(cx + Math.cos(ang) * len * f);
+      var my = Math.floor(cy + Math.sin(ang) * len * f);
+      if (!this.isDark(mx, my)) continue;
+      this.claim(mx, my);                       // limbs shade the ground too
+      place(this.out, mx, my, z0 + f * rise, w0 * (1 - 0.3 * f), 0.6,
+        this.pal.mat.bark, 'bark', this.rnd);
+    }
+  };
 
   /* Willow tendril: narrow in plan, continuous in z. A scatter of cubes here
      reads as a bush, not a hanging branch, so this is its own primitive - a
-     few tall jointed segments, each staying inside the module. */
-  function tendril(out, isDark, mx, my, zTop, length, pal, rnd) {
-    if (!isDark(mx, my)) return;
+     few tall jointed segments, each staying inside its module. */
+  Ctx.prototype.tendril = function (mx, my, zTop, length) {
+    if (!this.isDark(mx, my)) return;
+    this.claim(mx, my);
+    var rnd = this.rnd;
     var joints = 2 + Math.floor(rnd() * 3);
-    var remaining = length;
-    var z = zTop;
+    var remaining = length, z = zTop;
     for (var j = 0; j < joints && remaining > 0.3; j++) {
       var segLen = j === joints - 1 ? remaining : remaining * (0.35 + rnd() * 0.4);
       segLen = Math.min(segLen, remaining);
-      var width = 0.13 + rnd() * 0.09;
-      place(out, mx, my, z - segLen, width, segLen, pal.mat.leaf, 'tendril', rnd);
+      place(this.out, mx, my, z - segLen, 0.13 + rnd() * 0.09, segLen,
+        this.pal.mat.leaf, 'tendril', rnd);
       z -= segLen;
       remaining -= segLen;
     }
-  }
+  };
 
-  function grass(out, isDark, matrix, pal, rnd, density) {
-    var n = matrix.length;
-    for (var y = 0; y < n; y++) {
-      for (var x = 0; x < n; x++) {
-        if (!matrix[y][x] || rnd() > density) continue;
-        var tufts = 1 + Math.floor(rnd() * 2);
-        for (var t = 0; t < tufts; t++) {
-          place(out, x, y, 0, 0.16 + rnd() * 0.14, 0.18 + rnd() * 0.30,
-            pal.mat.grass, 'grass', rnd);
+  /* Ground. Every dark module becomes a raised block.
+
+     Under the crown the block is coloured with fallen blossom rather than
+     soil. Leaves are smaller than their module, so without this the gaps
+     between them show brown from overhead and the crown reads as speckle on
+     dirt; with it the module reads solid - leaf cube where there is a leaf,
+     fallen petal where there is not, both in the same colour family. From the
+     isometric view it also gives the drift of petals under the tree.
+
+     Contrast is unaffected: both fallen tones are darker than the leaves
+     above them, so they clear the floor by more than the foliage does. */
+  Ctx.prototype.groundBlocks = function () {
+    var pal = this.pal, n = this.n, rnd = this.rnd;
+    for (var my = 0; my < n; my++) {
+      for (var mx = 0; mx < n; mx++) {
+        if (!this.matrix[my][mx]) continue;
+        var nz = cellNoise(mx, my);
+        var mat;
+        if (this.claimed[my][mx]) {
+          mat = nz > 0.5 ? pal.mat.fallen : pal.mat.fallen2;
+        } else {
+          // brown soil where the crown does not reach, grass elsewhere
+          mat = nz > 0.45 ? pal.mat.grass : pal.mat.soil;
         }
+        place(this.out, mx, my, SLAB_TOP, 1, 0.26 + nz * 0.14, mat, 'ground', rnd);
       }
     }
-  }
+  };
 
   // --- species -----------------------------------------------------------
-  // Each returns voxels; `s` scales everything to the matrix size so a v2 code
-  // and a v10 code both grow a tree of sensible proportion.
 
-  /* Spring. Short trunk, broad crown built from several overlapping puffs at
-     staggered heights - deliberately flat and layered rather than a single
-     ball, which is what separates its silhouette from the oak. */
-  function plantSakura(out, isDark, matrix, pal, rnd, s, cx, cy) {
-    var th = 2.6 * s;
-    trunk(out, isDark, cx, cy, 0, th, pal, rnd, 0.42);
-    var puffs = 5 + Math.floor(rnd() * 3);
-    for (var i = 0; i < puffs; i++) {
-      var ang = rnd() * Math.PI * 2;
-      var rad = rnd() * 2.6 * s;
-      cloud(out, isDark,
-        cx + 0.5 + Math.cos(ang) * rad,
-        cy + 0.5 + Math.sin(ang) * rad,
-        th + 0.5 * s + rnd() * 1.5 * s,
-        2.3 * s, 2.3 * s, 1.05 * s,          // flat-ish: rz much smaller than rx/ry
-        Math.round(26 * s * s), pal, rnd, 0.34, 0.55);
+  /* Spring. Short trunk, broad crown of several overlapping puffs at
+     staggered heights - deliberately flat and layered rather than one ball,
+     which is what separates its silhouette from the oak. Proportioned so the
+     crown top lands near 0.51 n: a crown at 0.35 n reads as a shrub on a
+     large empty plaza however good the foliage is. */
+  function plantSakura(c, n, cx, cy) {
+    var rnd = c.rnd;
+    var trunkH = n * 0.20;
+    var R = n * 0.30 * 0.98;
+    c.trunk(cx, cy, 0, trunkH, 0.46);
+
+    c.cloud(cx + 0.5, cy + 0.5, trunkH + n * 0.19, R, n * 0.115, 2.4, 0.34, 0.56);
+    for (var i = 0; i < 4; i++) {
+      var a = (i / 4) * Math.PI * 2 + rnd() * 0.5;
+      c.cloud(cx + 0.5 + Math.cos(a) * R * 0.60,
+              cy + 0.5 + Math.sin(a) * R * 0.60,
+              trunkH + n * (0.12 + rnd() * 0.07),
+              R * 0.66, n * 0.10, 2.4, 0.34, 0.56);
     }
+    c.cloud(cx + 0.5, cy + 0.5, trunkH + n * 0.31, R * 0.54, n * 0.085, 2.4, 0.30, 0.50);
   }
 
-  /* Summer. Thick trunk, heavy forking limbs, deep rounded crown. Taller and
+  /* Summer. Thick trunk, heavy forking limbs, deep rounded crown - taller and
      lumpier than the sakura. */
-  function plantOak(out, isDark, matrix, pal, rnd, s, cx, cy) {
-    var th = 4.2 * s;
-    trunk(out, isDark, cx, cy, 0, th, pal, rnd, 0.68);
-    // a couple of neighbouring columns thicken the bole where they are dark
-    trunk(out, isDark, cx + 1, cy, 0, th * 0.72, pal, rnd, 0.4);
-    trunk(out, isDark, cx, cy + 1, 0, th * 0.72, pal, rnd, 0.4);
+  function plantOak(c, n, cx, cy) {
+    var rnd = c.rnd;
+    var trunkH = n * 0.24;
+    var R = n * 0.30;
+    c.trunk(cx, cy, 0, trunkH, 0.70);
+    c.trunk(cx + 1, cy, 0, trunkH * 0.7, 0.42);
+    c.trunk(cx, cy + 1, 0, trunkH * 0.7, 0.42);
 
-    var limbs = 4 + Math.floor(rnd() * 3);
+    var limbs = 5 + Math.floor(rnd() * 2);
     for (var i = 0; i < limbs; i++) {
-      var ang = (i / limbs) * Math.PI * 2 + rnd() * 0.7;
-      var len = (1.8 + rnd() * 1.8) * s;
-      var steps = Math.max(3, Math.round(len * 2.2));
-      for (var k = 1; k <= steps; k++) {
-        var f = k / steps;
-        var px = cx + 0.5 + Math.cos(ang) * len * f;
-        var py = cy + 0.5 + Math.sin(ang) * len * f;
-        var pz = th * 0.62 + f * 2.1 * s;
-        var mx = Math.floor(px), my = Math.floor(py);
-        if (!isDark(mx, my)) continue;
-        place(out, mx, my, pz, 0.46 - 0.14 * f, 0.55, pal.mat.bark, 'bark', rnd);
-      }
+      c.limb(cx + 0.5, cy + 0.5, (i / limbs) * Math.PI * 2 + rnd() * 0.6,
+        R * (0.5 + rnd() * 0.4), trunkH * 0.62, n * 0.09, 0.48);
     }
-    var lobes = 4 + Math.floor(rnd() * 3);
-    for (var j = 0; j < lobes; j++) {
-      var a2 = rnd() * Math.PI * 2, r2 = rnd() * 2.4 * s;
-      cloud(out, isDark,
-        cx + 0.5 + Math.cos(a2) * r2,
-        cy + 0.5 + Math.sin(a2) * r2,
-        th + 2.4 * s + rnd() * 1.6 * s,
-        2.8 * s, 2.8 * s, 2.1 * s,           // deep and rounded
-        Math.round(34 * s * s), pal, rnd, 0.38, 0.60);
+    c.cloud(cx + 0.5, cy + 0.5, trunkH + n * 0.20, R, n * 0.20, 2.4, 0.38, 0.62);
+    for (var j = 0; j < 4; j++) {
+      var a = (j / 4) * Math.PI * 2 + rnd() * 0.7;
+      c.cloud(cx + 0.5 + Math.cos(a) * R * 0.55,
+              cy + 0.5 + Math.sin(a) * R * 0.55,
+              trunkH + n * (0.16 + rnd() * 0.12),
+              R * 0.62, n * 0.15, 2.4, 0.38, 0.62);
     }
   }
 
   /* Autumn. Tall pale trunk, bare for most of its height, then a sparse open
      crown of scattered clumps with big gaps between them. The near-white bark
      lives entirely on the side faces - see palette.js. */
-  function plantGum(out, isDark, matrix, pal, rnd, s, cx, cy) {
-    var th = 6.4 * s;
-    trunk(out, isDark, cx, cy, 0, th, pal, rnd, 0.40);
-    var clumps = 5 + Math.floor(rnd() * 4);
+  function plantGum(c, n, cx, cy) {
+    var rnd = c.rnd;
+    var trunkH = n * 0.42;
+    c.trunk(cx, cy, 0, trunkH, 0.42);
+
+    var clumps = 8 + Math.floor(rnd() * 3);
     for (var i = 0; i < clumps; i++) {
-      var ang = rnd() * Math.PI * 2;
-      var rad = (0.6 + rnd() * 2.6) * s;
-      cloud(out, isDark,
-        cx + 0.5 + Math.cos(ang) * rad,
-        cy + 0.5 + Math.sin(ang) * rad,
-        th * (0.82 + rnd() * 0.34),
-        1.25 * s, 1.25 * s, 1.05 * s,
-        Math.round(11 * s * s), pal, rnd, 0.30, 0.48);    // low count: open crown
-    }
-    // a few bare upper branch stubs to sell the height
-    for (var b = 0; b < 3; b++) {
       var a = rnd() * Math.PI * 2;
-      for (var k = 1; k <= 3; k++) {
-        var mx = Math.floor(cx + 0.5 + Math.cos(a) * k * 0.8 * s);
-        var my = Math.floor(cy + 0.5 + Math.sin(a) * k * 0.8 * s);
-        if (!isDark(mx, my)) continue;
-        place(out, mx, my, th * 0.86 + k * 0.35 * s, 0.26, 0.5, pal.mat.bark, 'bark', rnd);
-      }
+      var rad = (0.05 + rnd() * 0.20) * n;
+      c.cloud(cx + 0.5 + Math.cos(a) * rad,
+              cy + 0.5 + Math.sin(a) * rad,
+              trunkH * (0.80 + rnd() * 0.36),
+              n * 0.11, n * 0.075, 3.4, 0.30, 0.50);
+    }
+    for (var b = 0; b < 3; b++) {
+      c.limb(cx + 0.5, cy + 0.5, rnd() * Math.PI * 2, n * 0.10,
+        trunkH * 0.86, n * 0.05, 0.28);
     }
   }
 
   /* Winter. A dome of foliage with long jointed tendrils falling from beneath
      its outer rim, nearly to the ground. */
-  function plantWillow(out, isDark, matrix, pal, rnd, s, cx, cy) {
-    var th = 3.4 * s;
-    trunk(out, isDark, cx, cy, 0, th, pal, rnd, 0.52);
+  function plantWillow(c, n, cx, cy) {
+    var rnd = c.rnd;
+    var trunkH = n * 0.22;
+    var R = n * 0.29;
+    var domeZ = trunkH + n * 0.13;
+    c.trunk(cx, cy, 0, trunkH, 0.54);
+    c.dome(cx + 0.5, cy + 0.5, domeZ, R, n * 0.16, 5.2, 0.34, 0.56);
 
-    var domeR = 3.1 * s;
-    var domeZ = th + 1.5 * s;
-    // upper half only, so it reads as a dome rather than a ball
-    var n = Math.round(70 * s * s);
-    for (var i = 0; i < n; i++) {
-      var ux, uy, uz, m;
-      do {
-        ux = rnd() * 2 - 1; uy = rnd() * 2 - 1; uz = rnd();
-        m = ux * ux + uy * uy + uz * uz;
-      } while (m > 1);
-      var px = cx + 0.5 + ux * domeR, py = cy + 0.5 + uy * domeR;
-      var pz = domeZ + uz * 1.7 * s;
-      var mx = Math.floor(px), my = Math.floor(py);
-      if (!isDark(mx, my)) continue;
-      var size = 0.34 + rnd() * 0.22;
-      place(out, mx, my, pz, size, size * 1.05, pal.mat.leaf, 'leaf', rnd);
-    }
-
-    // tendrils from beneath the outer rim, falling nearly to the ground
-    var strands = Math.round(16 * s);
+    var strands = Math.round(n * 1.4);
     for (var t = 0; t < strands; t++) {
       var a = rnd() * Math.PI * 2;
-      var r = domeR * (0.62 + rnd() * 0.42);
-      var mx2 = Math.floor(cx + 0.5 + Math.cos(a) * r);
-      var my2 = Math.floor(cy + 0.5 + Math.sin(a) * r);
-      var top = domeZ - 0.2 * s;
-      var len = top - (0.15 + rnd() * 0.9) * s;
-      tendril(out, isDark, mx2, my2, top, Math.max(0.8, len), pal, rnd);
+      var r = R * (0.60 + rnd() * 0.42);
+      var top = domeZ - n * 0.01;
+      c.tendril(Math.floor(cx + 0.5 + Math.cos(a) * r),
+                Math.floor(cy + 0.5 + Math.sin(a) * r),
+                top, Math.max(1.0, top - (0.02 + rnd() * 0.07) * n));
     }
   }
 
@@ -301,32 +355,40 @@
     sakura: plantSakura, oak: plantOak, gum: plantGum, willow: plantWillow
   };
 
-  /* Build the whole diorama. Returns voxels plus the matrix, so the renderer
-     needs nothing else. */
   function build(opts) {
     var matrix = opts.matrix;
     var n = matrix.length;
     var pal = Palette.build(opts.species, opts.swatch);
     var rnd = mulberry32(hashString(opts.seed + '|' + opts.species + '|' + opts.swatch));
-    var isDark = makeDark(matrix);
-    var s = n / 13;                       // proportion tracks the matrix size
+    var c = new Ctx(matrix, pal, rnd);
 
     var centre = nearestDark(matrix, (n - 1) / 2, (n - 1) / 2);
-    var out = [];
-    grass(out, isDark, matrix, pal, rnd, 0.20);
-    (PLANTERS[opts.species] || plantOak)(out, isDark, matrix, pal, rnd, s, centre[0], centre[1]);
+    // Plant first, so groundBlocks knows which modules are under the crown.
+    (PLANTERS[opts.species] || plantOak)(c, n, centre[0], centre[1]);
+    var canopy = c.out.length;
+    c.groundBlocks();
 
-    var maxZ = 0;
-    for (var i = 0; i < out.length; i++) maxZ = Math.max(maxZ, out[i].z + out[i].h);
+    var maxZ = 0, claimedCount = 0;
+    for (var i = 0; i < c.out.length; i++) maxZ = Math.max(maxZ, c.out[i].z + c.out[i].h);
+    for (var y = 0; y < n; y++) for (var x = 0; x < n; x++) if (c.claimed[y][x]) claimedCount++;
 
     return {
-      matrix: matrix, n: n, palette: pal, voxels: out, maxZ: maxZ,
-      centre: centre, species: opts.species
+      matrix: matrix, n: n, palette: pal, voxels: c.out, maxZ: maxZ,
+      centre: centre, species: opts.species,
+      stats: {
+        total: c.out.length,
+        canopy: canopy,
+        ground: c.out.length - canopy,
+        claimed: claimedCount,
+        heightFraction: maxZ / n
+      }
     };
   }
 
   return {
     SPECIES: SPECIES,
+    SLAB_BOTTOM: SLAB_BOTTOM,
+    SLAB_TOP: SLAB_TOP,
     build: build,
     hashString: hashString,
     mulberry32: mulberry32,

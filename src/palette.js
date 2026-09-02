@@ -93,9 +93,12 @@
   // Paving is the light module and also the canvas background, so the 4-module
   // quiet zone is the same colour as the light paving and reads as margin.
   var PAVING = '#EDEAE3';
-  var SOIL = '#3B342B';       // dark module. Comfortably past the floor: the
-                              // ground layer alone reproduces the matrix, so it
-                              // is the single most important contrast in the scene.
+  /* Soil sits near 5:1 rather than the near-black 10:1 it is tempting to
+     reach for. The ground layer alone reproduces the matrix, so the instinct
+     is to make it as dark as possible - but 5:1 already clears the floor with
+     two-thirds of headroom to spare, and it reads as earth instead of ink. */
+  var SOIL = '#746249';
+  var GRASS = '#4A6B36';
   var SLAB_SIDE = '#6E6152';  // never seen from overhead
 
   /* Six foliage swatches. Every one of these is darker than its natural-looking
@@ -121,8 +124,6 @@
     gum:    { barkTop: '#413B30', barkSide: '#E4DED2' },
     willow: { barkTop: '#3A3B2E', barkSide: '#6E6A55' }
   };
-
-  var GRASS = '#3F5A2E';
 
   /* Build the full colour set for a species + swatch, with every dark-module
      surface pushed through the contrast floor. */
@@ -162,10 +163,23 @@
       return { top: top, sideA: darken(top, a), sideB: darken(top, b) };
     }
     pal.mat = {
-      leaf: sides(pal.foliageTop, 0.18, 0.34),
-      grass: sides(pal.grassTop, 0.16, 0.30),
+      leaf: sides(pal.foliageTop, 0.16, 0.32),
+      grass: sides(pal.grassTop, 0.16, 0.32),
+      soil: sides(pal.soil, 0.16, 0.32),
       bark: { top: pal.barkTop, sideA: pal.barkSide, sideB: darken(pal.barkSide, 0.16) }
     };
+
+    /* Fallen blossom. Ground under the crown is carpeted with these rather
+       than left as bare soil: leaf cubes are smaller than their module, so
+       from overhead the gaps would show brown and the crown would read as
+       speckle on dirt instead of a solid block of colour. Both tones are
+       DARKER than the leaves above them, so they clear the floor by more
+       than the foliage does - the carpet costs nothing in contrast.
+
+       Together with the two side tones this is the five-tone ladder:
+         top 0   right -16%   fallen -24%   left -32%   fallen2 -34%  */
+    pal.mat.fallen = sides(darken(pal.foliageTop, 0.24), 0.16, 0.32);
+    pal.mat.fallen2 = sides(darken(pal.foliageTop, 0.34), 0.16, 0.32);
     pal.foliageSide = pal.mat.leaf.sideA;
     pal.grassSide = pal.mat.grass.sideA;
     pal.soilSide = darken(pal.soil, 0.10);

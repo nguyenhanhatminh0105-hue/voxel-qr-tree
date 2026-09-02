@@ -11,15 +11,16 @@
    DRAW ORDER, and why it is not one sorted list:
      1. Canvas is flooded with the paving colour, so the quiet zone is light.
      2. The base slab is drawn FIRST, outside the sort. It spans the whole plot
-        and sits under every tile, so no single depth key can order it against
-        them - a centre-point key puts it in the middle of the tile run and it
+        and sits under every block, so no single depth key can order it against
+        them - a centre-point key puts it in the middle of the run and it
         paints over the back half of the ground.
-     3. Ground tiles are flat at z = 0 and never overlap anything standing on
-        them, so they are painted wholesale, still before the sort. Steps 1-3
-        are cached to an offscreen canvas and only redrawn when the camera or
-        palette changes - wind forces a full repaint of everything else every
-        frame, so this cache is what keeps the idle scene cheap.
-     4. Standing voxels are depth sorted and painted back to front.
+     3. Steps 1-2 are cached to an offscreen canvas and redrawn only when the
+        camera or palette changes. Wind forces a full repaint of the sorted
+        list every frame, so the cache still earns its place.
+     4. Everything else - including the dark modules, which are raised blocks
+        rather than flat tiles - is depth sorted and painted back to front.
+        Raised blocks genuinely overlap what stands on them, so unlike flat
+        tiles they cannot be painted wholesale ahead of the sort.
 
    WIND: amplitude is scaled by (1 - t)^2, so it reaches exactly zero in the
    code view - any horizontal sway there would slide leaves off their modules
@@ -36,9 +37,11 @@
 
   var DEG = Math.PI / 180;
   var YAW_START = 45 * DEG, YAW_END = 0;
-  var PITCH_START = 35 * DEG, PITCH_END = 90 * DEG;
+  // atan(1/sqrt(2)) is the true isometric elevation, where the three axes
+  // foreshorten equally.
+  var PITCH_START = Math.atan(1 / Math.SQRT2), PITCH_END = 90 * DEG;
   var QUIET = 4;                  // modules of quiet zone in the code view
-  var SLAB_H = 0.9;               // slab thickness, module units
+  var SLAB_BOTTOM = -1.5, SLAB_TOP = -0.02;   // slab spans these, in module units
   var EPS_FACE = 1e-6;            // below this a face is edge-on: do not draw
   var EPS_AREA = 1e-4;            // projected area floor, catches degenerate quads
   var WIND_FREQ = 0.0011;
@@ -67,7 +70,7 @@
     for (var i = 0; i < 8; i++) {
       var x = (i & 1) ? n : 0;
       var y = (i & 2) ? n : 0;
-      var z = (i & 4) ? maxZ : -SLAB_H;
+      var z = (i & 4) ? maxZ : SLAB_BOTTOM;
       var vx = x * cy - y * sy;
       var vy = x * sy + y * cy;
       var px = vx, py = vy * sp - z * cp;
@@ -170,35 +173,31 @@
     ctx.fill();
   }
 
-  // Push a quad outward from its centroid so adjacent ground tiles meet without
-  // an antialiased seam. Only ever used on the flat tiles.
-  function inflate(pts, px) {
-    var cx = 0, cy = 0, k = pts.length / 2;
-    for (var i = 0; i < pts.length; i += 2) { cx += pts[i]; cy += pts[i + 1]; }
-    cx /= k; cy /= k;
-    var out = new Array(pts.length);
-    for (var j = 0; j < pts.length; j += 2) {
-      var dx = pts[j] - cx, dy = pts[j + 1] - cy;
-      var len = Math.hypot(dx, dy) || 1;
-      out[j] = pts[j] + dx / len * px;
-      out[j + 1] = pts[j + 1] + dy / len * px;
-    }
-    return out;
-  }
-
   /* Ground: background flood, slab, paving, dark tiles. Nothing here moves in
      the wind and nothing here overlaps, so the whole thing is one cacheable
      image. */
-  function drawGround(ctx, scene, cam, W, H, dpr) {
+  function drawGround(ctx, scene, cam, W, H) {
     var pal = scene.palette, n = scene.n;
     ctx.save();
     ctx.fillStyle = pal.paving;
     ctx.fillRect(0, 0, W, H);
 
-    // --- slab, first and outside the sort -------------------------------
-    // Exactly (0,0)-(n,n): no half-module shift is applied anywhere.
-    var slab = { x: 0, y: 0, z: -SLAB_H, w: n, d: n, h: SLAB_H, phase: 0,
-                 top: pal.paving, side: pal.slabSide,
+    /* --- slab, first and outside the sort -------------------------------
+       It spans the whole plot and sits under every block, so no single depth
+       key can order it against them - a centre-point key puts it in the middle
+       of the run and it paints over the back half of the ground.
+
+       Exactly (0,0)-(n,n): no half-module shift is applied anywhere in this
+       file. If one is ever added, the slab's own x/y must cancel it or the
+       slab juts past two edges and eats the quiet zone.
+
+       The dark modules themselves are NOT drawn here. They are raised blocks,
+       which genuinely overlap what stands on them, so they live in the sorted
+       voxel list like everything else. That leaves this cache holding just the
+       background flood and one box - still worth keeping, since wind forces a
+       full repaint of the sorted list every frame. */
+    var slab = { x: 0, y: 0, z: SLAB_BOTTOM, w: n, d: n, h: SLAB_TOP - SLAB_BOTTOM,
+                 phase: 0, top: pal.paving, side: pal.slabSide,
                  sideA: pal.slabSide, sideB: Palette.darken(pal.slabSide, 0.14) };
     var faces = [];
     boxFaces(faces, cam, slab, 0, 0);
@@ -206,24 +205,6 @@
       if (Math.abs(shoelace(faces[f].pts)) > EPS_AREA) fillPoly(ctx, faces[f].pts, faces[f].col);
     }
 
-    // --- dark tiles ------------------------------------------------------
-    // Paving is already down as the slab top, so only the dark modules are
-    // painted here. Tonal variation on them may only ever go darker.
-    var bleed = 0.5 / (dpr || 1);
-    for (var my = 0; my < n; my++) {
-      for (var mx = 0; mx < n; mx++) {
-        if (!scene.matrix[my][mx]) continue;
-        var j = ((mx * 73856093) ^ (my * 19349663)) >>> 0;
-        var shade = ((j >>> 8) & 255) / 255 * 0.10;
-        var pts = [
-          projX(cam, mx, my), projY(cam, mx, my, 0),
-          projX(cam, mx + 1, my), projY(cam, mx + 1, my, 0),
-          projX(cam, mx + 1, my + 1), projY(cam, mx + 1, my + 1, 0),
-          projX(cam, mx, my + 1), projY(cam, mx, my + 1, 0)
-        ];
-        fillPoly(ctx, inflate(pts, bleed), Palette.darken(pal.soil, shade));
-      }
-    }
     ctx.restore();
   }
 
@@ -250,7 +231,7 @@
   }
 
   return {
-    DEG: DEG, QUIET: QUIET, SLAB_H: SLAB_H,
+    DEG: DEG, QUIET: QUIET, SLAB_BOTTOM: SLAB_BOTTOM, SLAB_TOP: SLAB_TOP,
     WIND_AMP: WIND_AMP, WIND_FREQ: WIND_FREQ, WIND_DIR: WIND_DIR,
     EPS_AREA: EPS_AREA,
     easeInOutCubic: easeInOutCubic,

@@ -4,15 +4,17 @@ Type a URL. It grows into an isometric voxel tree on a square plot. Tap the
 plot and the camera swings to straight-down, where the whole diorama reads as a
 scannable QR code.
 
-Two builds, same behaviour:
+Two builds, same behaviour, same test suite:
 
-| file | renderer | size | dependencies |
-|---|---|---|---|
-| `index.html` | canvas 2D, painter's algorithm | 70 KB | none |
-| `three.html` | WebGL, three.js r180 vendored inline | 762 KB | none at runtime |
+| file | renderer | size | frame cost | dependencies |
+|---|---|---|---|---|
+| **`index.html`** | WebGL, three.js r180 vendored inline, InstancedMesh | 765 KB | 0.6 ms | none at runtime |
+| `canvas.html` | canvas 2D, painter's algorithm | 73 KB | 9.4 ms | none at all |
 
 Both are single files and both run from a `file://` URL with no network access.
-Open either one directly in a browser.
+Open either directly in a browser. (Frame cost measured on the heaviest scene,
+1,646 voxels at 33x33; the WebGL figure is software-rendered SwiftShader, so a
+real GPU is faster still.)
 
 ![Four species](docs/trees.png)
 
@@ -52,10 +54,20 @@ stacked crates. Leaves are roughly half-module scale, scattered, several per
 column at varied heights. Enforced in exactly one place — `place()` in
 `src/scene.js`, the only function that creates a voxel.
 
-**Gaps in foliage are safe, and are the strongest part of the code.** Soil
-under a dark module scores 10.2:1 against the paving; the foliage itself
-scores about 5:1. There is deliberately no rule that foliage must fill its
-module — it would buy nothing and it is exactly what makes crowns look blocky.
+**Gaps in foliage are safe.** There is deliberately no rule that foliage must
+fill its module — it would turn every crown into a stack of crates. What the
+gaps must not show is *bare brown ground*; see the fallen-blossom carpet
+below.
+
+**Every dark module is a raised block, never a flat tile.** Flat tiles make
+the plot read as ink printed on a floor. Raised blocks make it read as terrain
+the tree is growing out of. Grass and soil where the crown does not reach,
+fallen blossom where it does.
+
+**Soil sits near 5:1, not the near-black 10:1 you first reach for.** The
+ground layer alone reproduces the matrix, so the instinct is to make it as
+dark as possible — but 5:1 already clears the floor with two-thirds of the
+headroom to spare, and it reads as earth instead of ink.
 
 **Every colour that can land on a dark module needs ≥3:1 contrast against the
 paving.** See below; this forces deeper tones than anyone would pick for looks.
@@ -77,6 +89,70 @@ per-voxel phase hashed from position.
 **A 4-module quiet zone** is reserved as the camera goes overhead, and the
 canvas background is flooded with the paving colour so the margin reads light.
 
+### Orthographic camera, and why it is not a tuning knob
+
+The WebGL build uses `OrthographicCamera`. It has to.
+
+The whole trick depends on a voxel at height `h` landing on **its own module**
+when seen from above. Under perspective it projects outward by
+`r * h / (D - h)`, where `r` is horizontal distance from the view axis and `D`
+the camera distance:
+
+| camera distance | voxel at r=8, h=12 | voxel at r=16, h=18 |
+|---|---|---|
+| 40 | 3.4 modules off | 13.1 modules off |
+| 120 | 0.9 modules off | 2.8 modules off |
+| 1000 | 0.1 modules off | 0.3 modules off |
+| orthographic | **0.00** | **0.00** |
+
+Pushing the camera away makes the error small, never zero, and costs depth
+precision on the way.
+
+The isometric view is the same camera at yaw 45 deg and pitch
+`atan(1/sqrt(2))` — the true isometric elevation, where all three axes
+foreshorten equally — animating to yaw 0, pitch 90.
+
+### Lighting would eat the contrast budget
+
+There are **no lights in the WebGL scene at all**. Materials are
+`MeshBasicMaterial` with per-instance colour.
+
+Ordinary 3-D lighting does the exact opposite of what this design needs. A
+light from above makes top faces the *brightest* — and the top face is the
+only one a scanner sees, so brightening it walks foliage back up through the
+3:1 floor and makes the code unscannable while still looking perfectly fine on
+screen. Here the top face carries the base tone and the two sides are baked
+darker, so every surface is exactly the value the audit checked.
+
+For the same reason the contrast check samples the **framebuffer**, never
+`material.color`.
+
+### One InstancedMesh per face
+
+A 33x33 code carries 1,200–1,650 boxes. Each box shows at most three faces —
+yaw stays in [0, 45] and pitch in [35, 90], so +x, +y and the underside are
+never front-facing — so there are three `InstancedMesh` objects over a
+single-quad geometry, one per face orientation, each carrying its own exact
+per-instance colour.
+
+Three meshes rather than one is deliberate: `instanceColor` is one colour per
+instance, and each box needs three different tones. Splitting by face is what
+keeps the colours exact instead of approximating them with a shader multiply
+in the wrong colour space.
+
+The wind shear goes straight into the instance matrix — a 4x4 can express it:
+
+```
+X = x + u*w + (lo + (hi-lo)*t) * dirX
+Y = y + v*d + (lo + (hi-lo)*t) * dirY
+Z = z + t*h
+```
+
+with `lo` the displacement at the box's base and `hi` at its top. The base
+stays planted and the top leans, so the tree bends rather than slides. At
+`amp = 0` both are exactly zero and every matrix returns to its authored
+value.
+
 ### Draw order (canvas build only)
 
 The full-plot slab cannot be depth-sorted against the tiles sitting on it — one
@@ -93,12 +169,59 @@ Flat ground never overlaps anything standing on it, so it is painted wholesale
 before the sort — which lets it be cached to an offscreen canvas between
 frames. That cache matters, because wind forces a full redraw every frame.
 
-**All three of those constraints are artefacts of painter's-algorithm sorting
-and simply evaporate in `three.html`**, where a depth buffer does the work.
-What does *not* evaporate is everything above: the contrast floor, the
-edge-crossing rule, and the wind decay all survive unchanged.
+**These are artefacts of painter's-algorithm sorting and simply evaporate in
+the WebGL build**, where a depth buffer does the work — the slab is just one
+more instance there, there is no ground cache, and back-face culling is the GPU's
+job. Only coplanar z-fighting replaces them, handled by the gap between the
+slab top and the blocks seated on it.
+
+What does *not* evaporate: the orthographic requirement, the contrast floor,
+the edge-crossing rule and the wind decay all survive unchanged.
 
 ---
+
+## The fallen-blossom carpet
+
+Leaves are smaller than their module. Left alone, the gaps between them show
+brown soil from overhead and a crown reads as pink *speckle on dirt* rather
+than the solid blossom it should be.
+
+The fix costs no geometry. While planting, every module that ends up with
+foliage overhead is recorded — inside the leaf, tendril and limb helpers — and
+its ground block is then coloured with fallen blossom instead of soil:
+
+```js
+pal.mat.fallen  = darken(canopy, 0.24);
+pal.mat.fallen2 = darken(canopy, 0.34);
+// per module under the crown, chosen by stable per-cell noise
+```
+
+From overhead the module now reads solid: leaf cube where there is a leaf,
+fallen petal where there is not, both in the same colour family. From the
+isometric view you get the drift of petals on the ground under the tree.
+
+Contrast is unaffected — both fallen tones are *darker* than the leaves above
+them, so they clear the floor by more than the foliage does. Soil stays brown
+everywhere the crown does not reach.
+
+## Proportion
+
+A crown at 35–40% of the plot width reads as a shrub on a large empty plaza
+however good the foliage is. All four species are dimensioned as fractions of
+`n`, the matrix size, so a version 2 code and a version 10 code grow trees of
+the same proportion. At 33x33:
+
+| species | voxels | of which canopy | height as % of plot width |
+|---|---|---|---|
+| sakura | 1,642 | 1,095 | 60% |
+| oak | 1,541 | 994 | 68% |
+| gum | 1,289 | 742 | 57% |
+| willow | 1,399 | 852 | 52% |
+
+The sakura is built to an explicit recipe: trunk `n*0.20`, main puff at
+`trunkH + n*0.19` with radius `n*0.30*0.98` and half-height `n*0.115`, four
+side puffs at `R*0.60` from centre, and one high puff at `trunkH + n*0.31`.
+That puts the crown top near `0.51 n`, plus sprigs above it.
 
 ## Where the contrast floor overrode taste
 
@@ -128,6 +251,19 @@ pale stalk, and the crown looks like a field of mushrooms. Side faces are
 exempt from the floor, so they are shaded **darker** than the tops instead,
 which restores ordinary top-lit form for free. The gum keeps light sides,
 because its pale bark is the entire point of the species.
+
+That gives the five-tone ladder every dark-module surface is drawn from:
+
+| tone | offset | used for | ratio (rose) |
+|---|---|---|---|
+| top | 0 | top faces — the only ones a scanner sees | 5.4:1 |
+| right | −16% | `-y` side face | 6.9:1 |
+| fallen | −24% | ground under the crown | 7.8:1 |
+| left | −32% | `-x` side face | 8.8:1 |
+| fallen2 | −34% | ground under the crown, alternate | 9.0:1 |
+
+Every rung is darker than the top, so the top face is the binding constraint
+and everything else clears the floor by construction.
 
 ---
 
@@ -192,11 +328,11 @@ info. In practice they agreed on all 74 cases here.
 ## Verification
 
 ```
-python build.py                                   # produce index.html + three.html
+python build.py                                   # produce index.html + canvas.html
 python test/test_qr_vs_segno.py                   # encoder vs segno
 python test/test_qr_decode.py                     # shipped matrices, ZBar
-python test/test_render.py                        # canvas 2D, full sweep
-python test/test_render.py --target three.html    # WebGL, full sweep
+python test/test_render.py                        # WebGL, full sweep
+python test/test_render.py --target canvas.html   # canvas 2D, full sweep
 python test/shoot.py                              # preview sheets into out/
 ```
 
@@ -212,7 +348,7 @@ voxel overhanging its module, and it would pass while the real thing fails.
 
 ### Results
 
-`index.html`, 6 links × 4 seasons × 6 swatches:
+`index.html` (WebGL), 6 links × 4 seasons × 6 swatches:
 
 ```
 combinations swept   : 144
@@ -227,15 +363,8 @@ geometry checks      : 288 (no malformed faces)
    wind at t=0       : moving
 ```
 
-`three.html`, same sweep, WebGL through SwiftShader:
-
-```
-1. ZBar, clean       : 144/144 (100.0%)
-   cv2 Aruco         : 144/144 (100.0%)
-2. matrix from pixels: 144/144 (100.0%) exact, 0 modules differ
-3. through camera    : 432/432 (100.0%)
-4. wind at t=1       : bit-identical across 3 clocks
-```
+`canvas.html` scores identically on the same sweep: 144/144 clean, 144/144
+exact matrix reconstruction, 432/432 through the camera.
 
 The checks are:
 
@@ -262,8 +391,12 @@ The checks are:
   a left-handed frame; three.js is right-handed. **ZBar decodes mirrored QR
   codes perfectly happily**, so this passed the decode gate at 24/24 and was
   caught only by the pixel-level matrix diff, which reported 468 differing
-  modules and `fliplr == True`. Fixed by negating Y when writing vertices and
-  building the camera basis in that space.
+  modules and `fliplr == True`. Fixed by negating Y when writing instance
+  matrices and building the camera basis in that space.
+
+  This is the single best argument for reconstructing the matrix from pixels
+  rather than trusting a decoder. Every decode oracle said the render was
+  fine. It was not.
 
 ---
 
@@ -271,12 +404,12 @@ The checks are:
 
 ```
 src/qr.js            QR encoder, no dependencies
-src/palette.js       colour + the contrast floor
-src/scene.js         four planting routines
+src/palette.js       colour, the contrast floor, the five-tone ladder
+src/scene.js         planting: four species, ground blocks, fallen carpet
 src/render.js        canvas 2D axonometric renderer
 src/app.js           canvas build UI
 src/three-app.js     WebGL build (reuses qr/palette/scene untouched)
-build.py             inlines everything into index.html / three.html
+build.py             inlines everything into index.html / canvas.html
 test/                verification harness
 vendor/              three.js, bundled to a single global with esbuild
 ```
@@ -284,6 +417,11 @@ vendor/              three.js, bundled to a single global with esbuild
 `src/` exists so the modules can be unit-tested under Node; the shipped
 artefacts are the two HTML files, and `build.py` asserts no external reference
 survives into either.
+
+`qr.js`, `palette.js` and `scene.js` are shared verbatim between the two
+builds. Everything the code depends on — the matrix, the contrast floor, the
+planting rules — is renderer-agnostic, which is also why one test harness can
+drive both through the same `window.__arb` hooks.
 
 ## Licence
 
