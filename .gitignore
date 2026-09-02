@@ -1,0 +1,7 @@
+node_modules/
+package-lock.json
+test/_*.json
+test/__pycache__/
+out/dbg*.png
+out/dbg2*.png
+out/fail_*.png

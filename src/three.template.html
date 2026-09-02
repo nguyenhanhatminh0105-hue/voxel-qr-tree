@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>QR Arboretum (WebGL)</title>
+<meta name="description" content="Grow a URL into an isometric voxel tree that reads as a scannable QR code from directly overhead.">
+<style>
+/*__CSS__*/
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1>QR Arboretum <span>— a URL, grown · WebGL</span></h1>
+    <input id="url" type="url" spellcheck="false" autocomplete="off"
+           placeholder="https://example.com" aria-label="URL to encode">
+  </header>
+
+  <div id="stagewrap">
+    <div class="hint">tap the plot to look straight down</div>
+  </div>
+
+  <footer>
+    <div id="tabs" role="group" aria-label="Season"></div>
+    <div id="swatches" role="group" aria-label="Foliage colour"></div>
+    <div class="actions">
+      <button id="flip" type="button">Flip to code</button>
+      <button id="png" type="button">PNG</button>
+    </div>
+    <div id="readout" class="readout"></div>
+  </footer>
+</div>
+
+<script>
+/*__QR__*/
+</script>
+<script>
+/*__PALETTE__*/
+</script>
+<script>
+/*__SCENE__*/
+</script>
+<script>
+/*__RENDER__*/
+</script>
+<script>
+/*__THREE__*/
+</script>
+<script>
+/*__THREEAPP__*/
+</script>
+</body>
+</html>
