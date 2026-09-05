@@ -64,6 +64,11 @@ the plot read as ink printed on a floor. Raised blocks make it read as terrain
 the tree is growing out of. Grass and soil where the crown does not reach,
 fallen blossom where it does.
 
+Height matters more than it sounds. At around a quarter of a module the blocks
+still read as flat plates scattered on the slab — the exact failure raising
+them was meant to fix. They are 0.52–0.82 of a module, which is enough side
+face to register as depth from the isometric view and changes nothing overhead.
+
 **Soil sits near 5:1, not the near-black 10:1 you first reach for.** The
 ground layer alone reproduces the matrix, so the instinct is to make it as
 dark as possible — but 5:1 already clears the floor with two-thirds of the
