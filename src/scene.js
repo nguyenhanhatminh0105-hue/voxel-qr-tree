@@ -253,7 +253,10 @@
           // brown soil where the crown does not reach, grass elsewhere
           mat = nz > 0.45 ? pal.mat.grass : pal.mat.soil;
         }
-        place(this.out, mx, my, SLAB_TOP, 1, 0.26 + nz * 0.14, mat, 'ground', rnd);
+        // Chunky enough to read as terrain. At 0.26 the blocks look like flat
+        // plates scattered on the slab, which is the very thing raising them
+        // was meant to fix.
+        place(this.out, mx, my, SLAB_TOP, 1, 0.52 + nz * 0.30, mat, 'ground', rnd);
       }
     }
   };
@@ -313,7 +316,7 @@
   function plantGum(c, n, cx, cy) {
     var rnd = c.rnd;
     var trunkH = n * 0.42;
-    c.trunk(cx, cy, 0, trunkH, 0.42);
+    c.trunk(cx, cy, 0, trunkH, 0.56);   // wide enough for the pale bark to read
 
     var clumps = 8 + Math.floor(rnd() * 3);
     for (var i = 0; i < clumps; i++) {
