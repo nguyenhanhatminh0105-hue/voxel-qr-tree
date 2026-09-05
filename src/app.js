@@ -235,7 +235,9 @@
       if (o.swatch) state.swatch = o.swatch;
       rebuild();
       if (o.t !== undefined) { state.t = o.t; state.target = o.t; }
-      return { version: state.qr.version, size: state.qr.size, voxels: state.scene.voxels.length };
+      // Same shape as the WebGL build's hook, so one harness drives both.
+      return { version: state.qr.version, size: state.qr.size,
+               voxels: state.scene.voxels.length, stats: state.scene.stats };
     },
     // Draw one frame at an explicit clock, bypassing rAF.
     renderAt: function (t, clock) {
@@ -292,6 +294,7 @@
       var cam = Render.makeCamera(state.scene.n, state.scene.maxZ, e, W, H);
       return { scale: cam.scale, ox: cam.ox, oy: cam.oy, n: state.scene.n, W: W, H: H, dpr: dpr };
     },
+    stats: function () { return state.scene.stats; },
     audit: function () { return Palette.audit(); },
     size: function () { return { W: W, H: H, dpr: dpr }; }
   };
