@@ -56,10 +56,18 @@
     };
   }
 
-  // Per-voxel phase for the wind, hashed from position so it is stable across
-  // frames and independent of draw order.
-  function phaseAt(x, y, z) {
-    var h = Math.imul(((x * 73856093) ^ (y * 19349663) ^ (z * 83492791)) >>> 0, 2654435761) >>> 0;
+  /* Wind phase, hashed from the COLUMN - deliberately not from z.
+
+     Including z gave every voxel in a vertical stack its own phase, so the
+     nine bark voxels of a trunk displaced independently and the trunk split at
+     its seams instead of bending: two abutting segments could sit at +0.193
+     and -0.018 at the same instant, a 0.21-module tear. The same defect made
+     the canopy boil rather than sway, because every leaf ran on its own clock.
+
+     Phase per column means a column moves as one piece and neighbouring
+     columns lag into a wave, which is what reads as wind. */
+  function phaseAt(x, y) {
+    var h = Math.imul(((x * 73856093) ^ (y * 19349663)) >>> 0, 2654435761) >>> 0;
     return (h / 4294967296) * Math.PI * 2;
   }
 
@@ -75,12 +83,31 @@
   // drawn, so being coplanar with the slab top cannot z-fight.
   var SLAB_BOTTOM = -1.5, SLAB_TOP = -0.02;
 
+  /* Per-kind wind stiffness. Bark and leaf obeying the same law made trunks
+     sway like saplings; a trunk should barely move while its foliage does. */
+  var STIFFNESS = {
+    bark: 0.15, leaf: 1.0, tendril: 1.0, blade: 0.4, grass: 0.4, ground: 0
+  };
+
   /* Vertical depth of canopy actually filled per column. A flat minimum plus
      a fraction of the span: rim columns (short spans) fill completely, while
      interior columns keep a proportional body rather than a thin lid, which is
      what stopped the crown reading as a hanging curtain. Capped so very large
      codes stay affordable. */
   var SHELL_MIN = 3.5, SHELL_FRAC = 0.62, SHELL_MAX = 7.5;
+  /* The crown needs an underside too. Filling only downward from the top left
+     each column a cap on a much longer span - a hollow dome with nothing
+     beneath it, which is why the crown looked unmoored from the plot.
+
+     The defence for a top-only shell was that deeper leaves are occluded by
+     the columns in front. That premise is false at 35 degrees elevation: the
+     columns in front were shelled away as well, so nothing is left to do the
+     occluding and you look straight under the dome and out the other side.
+
+     The lower shell is thinner than the upper one because less of the
+     underside is ever seen. Both scale with span, so the fill still tracks
+     crown FOOTPRINT rather than volume and the 45,000-leaf case stays gone. */
+  var SHELL_LOWER = 0.6;
 
   var SPECIES = [
     { id: 'sakura', season: 'Spring', name: 'Sakura', fall: 'petals' },
@@ -105,7 +132,7 @@
       w: size, d: size, h: height,
       top: mat.top, side: mat.sideA, sideA: mat.sideA, sideB: mat.sideB,
       kind: kind,
-      phase: phaseAt(mx, my, Math.round(z * 4))
+      phase: phaseAt(mx, my)
     });
   }
 
@@ -206,6 +233,17 @@
     this.cloud(cx, cy, cz, r, halfH, 0);
   };
 
+  // One continuous run of leaves up a column between two heights.
+  Ctx.prototype.stack = function (mx, my, z, zTop, pack, sizeLo, sizeHi) {
+    var rnd = this.rnd;
+    while (z < zTop) {
+      var size = sizeLo + rnd() * (sizeHi - sizeLo);
+      var h = size * (0.95 + rnd() * 0.6);
+      place(this.out, mx, my, z, size, h, this.pal.mat.leaf, 'leaf', rnd);
+      z += h * pack;
+    }
+  };
+
   /* Merge each column's spans and stack leaves up them continuously.
      `pack` is the vertical advance as a fraction of leaf height: below 1 the
      stack overlaps, which is what makes a column opaque. */
@@ -225,25 +263,15 @@
         var zBot = merged[m][0], zTop = merged[m][1];
         if (zBot < this.crownBottom) this.crownBottom = zBot;
         if (zTop > this.crownTop) this.crownTop = zTop;
-        /* Fill a shell, not the whole span. Only a column's top is ever seen:
-           from overhead you see its top face, and from 35 degrees you see the
-           crown's rim - whose spans are short anyway, since they sit where the
-           ellipsoid closes. Everything deeper is occluded by the columns in
-           front of it.
-
-           This is also what stops the leaf count exploding. Filling whole
-           spans makes it scale with crown VOLUME, so a version 13 code wanted
-           45,000 leaves; a fixed-depth shell scales with crown FOOTPRINT
-           instead. Same silhouette, same opacity, an order of magnitude fewer
-           voxels on large codes. */
-        var shell = Math.min(SHELL_MAX,
-          Math.max(SHELL_MIN, (zTop - zBot) * SHELL_FRAC));
-        var z = Math.max(zBot, zTop - shell);
-        while (z < zTop) {
-          var size = sizeLo + rnd() * (sizeHi - sizeLo);
-          var h = size * (0.95 + rnd() * 0.6);
-          place(this.out, mx, my, z, size, h, this.pal.mat.leaf, 'leaf', rnd);
-          z += h * pack;
+        /* Fill a shell at each end of the span, not the whole span, and not
+           only the top - see SHELL_LOWER. */
+        var span = zTop - zBot;
+        var upper = Math.min(SHELL_MAX, Math.max(SHELL_MIN, span * SHELL_FRAC));
+        var topStart = Math.max(zBot, zTop - upper);
+        this.stack(mx, my, topStart, zTop, pack, sizeLo, sizeHi);
+        if (topStart > zBot) {
+          var botEnd = Math.min(topStart, zBot + upper * SHELL_LOWER);
+          if (botEnd > zBot) this.stack(mx, my, zBot, botEnd, pack, sizeLo, sizeHi);
         }
       }
     }
@@ -364,7 +392,7 @@
               cy + 0.5 + Math.sin(a) * R * 0.55,
               trunkH + n * (0.24 + rnd() * 0.12), R * 0.66, n * 0.17);
     }
-    c.cloud(cx + 0.5, cy + 0.5, trunkH + n * 0.71, R * 0.54, n * 0.18);
+    c.cloud(cx + 0.5, cy + 0.5, trunkH + n * 0.64, R * 0.54, n * 0.175);
   }
 
   /* Summer. Thick trunk, heavy forking limbs, deep rounded crown - taller and
@@ -389,7 +417,7 @@
               cy + 0.5 + Math.sin(a) * R * 0.52,
               trunkH + n * (0.31 + rnd() * 0.14), R * 0.60, n * 0.24);
     }
-    c.cloud(cx + 0.5, cy + 0.5, trunkH + n * 0.71, R * 0.45, n * 0.18);
+    c.cloud(cx + 0.5, cy + 0.5, trunkH + n * 0.65, R * 0.45, n * 0.195);
   }
 
   /* Autumn. Tall pale trunk, bare for most of its height, then a sparse open
@@ -398,7 +426,7 @@
      thinning each one, which would just bring the lace back. */
   function plantGum(c, n, cx, cy) {
     var rnd = c.rnd;
-    var trunkH = n * 0.585;
+    var trunkH = n * 0.605;
     c.trunk(cx, cy, 0, trunkH, 0.56);   // wide enough for the pale bark to read
 
     var clumps = 7 + Math.floor(rnd() * 3);
@@ -409,6 +437,14 @@
               cy + 0.5 + Math.sin(a) * rad,
               trunkH + n * (0.04 + rnd() * 0.34), n * 0.115, n * 0.140);
     }
+    /* One clump anchored on the trunk column. Every other clump sits at a
+       random radius, so whether the crown reaches its nominal top depends on
+       which columns the matrix happens to leave dark - which spread the
+       measured silhouette across links by 0.14, most of the assertion band.
+       The trunk column is dark by construction, so anchoring one clump there
+       pins the apex and the random ones only ever fill in below it. */
+    c.cloud(cx + 0.5, cy + 0.5, trunkH + n * 0.38, n * 0.115, n * 0.140);
+
     for (var b = 0; b < 3; b++) {
       c.limb(cx + 0.5, cy + 0.5, rnd() * Math.PI * 2, n * 0.10,
         trunkH * 0.88, n * 0.06, 0.30);
@@ -474,6 +510,24 @@
       if (vx.y < cyMin) cyMin = vx.y;
       if (vx.y + vx.d > cyMax) cyMax = vx.y + vx.d;
     }
+    /* Bake the wind response into each voxel, so both renderers share one law
+       instead of each reimplementing pow(z, 1.4).
+
+       Height is normalised by maxZ. Using absolute z made displacement grow
+       with the tree, so a version 10 code swayed harder than a version 2 one -
+       2.22 modules of crown sway at n=25 rising to 3.26 at n=33, roughly 9% of
+       plot width either way. As a fraction of tree height it is scale-free.
+       The renderer multiplies these by WIND_AMP, which is now a displacement
+       in modules at the crown top. */
+    var mz = maxZ > 0 ? maxZ : 1;
+    for (var w = 0; w < c.out.length; w++) {
+      var vw = c.out[w];
+      var stiff = STIFFNESS[vw.kind];
+      if (stiff === undefined) stiff = 1;
+      vw.swayLo = stiff * Math.pow(Math.max(0, vw.z) / mz, 1.4);
+      vw.swayHi = stiff * Math.pow(Math.max(0, vw.z + vw.h) / mz, 1.4);
+    }
+
     var crownW = isFinite(cxMin) ? Math.max(cxMax - cxMin, cyMax - cyMin) : 0;
     var crownH = isFinite(c.crownTop) ? c.crownTop - c.crownBottom : 0;
     var groundTop = SLAB_TOP + 0.82;
@@ -502,6 +556,7 @@
 
   return {
     SPECIES: SPECIES,
+    STIFFNESS: STIFFNESS,
     SLAB_BOTTOM: SLAB_BOTTOM,
     SLAB_TOP: SLAB_TOP,
     build: build,
