@@ -64,10 +64,21 @@ class Arboretum:
         self.page.evaluate("a => window.__arb.renderAt(a[0], a[1])", [t, clock])
 
     def shoot(self, t, clock=0.0):
-        """Render one frame and return the canvas backing store as RGB."""
-        self.render(t, clock)
+        """Render one frame at an explicit clock and return the canvas as RGB.
+
+        The render and the readback happen in ONE evaluate, deliberately. Both
+        apps keep a requestAnimationFrame loop running, so splitting these into
+        two round trips lets a rAF frame repaint the canvas in between - at the
+        wall clock rather than the clock asked for, and with falling petals
+        included. That made t=0 silhouette measurements jitter by up to 0.11
+        between identical runs. At t=1 it was harmless (wind is zero and petals
+        have faded), which is why the decode gates never caught it.
+        """
         data = self.page.evaluate(
-            "() => document.getElementById('stage').toDataURL('image/png')")
+            """a => { window.__arb.renderAt(a[0], a[1]);
+                      return document.getElementById('stage').toDataURL('image/png'); }""",
+            [t, clock],
+        )
         raw = base64.b64decode(data.split(",", 1)[1])
         return np.array(Image.open(io.BytesIO(raw)).convert("RGB"))
 
@@ -82,6 +93,37 @@ class Arboretum:
 
     def audit(self):
         return self.page.evaluate("() => window.__arb.audit()")
+
+
+def silhouette_aspect(img, bg=(237, 234, 227), tol=10):
+    """Rendered diorama height / plot width, measured on the actual render.
+
+    The bounding box of the diorama: its width is the plot's projected diagonal
+    (the widest thing in frame) and its height spans slab rim to crown top. The
+    reference video sits at 0.96. A flat canopy drives this down and reads as a
+    disc on a plaza; it is the single number that best tracks "does this look
+    like the reference".
+
+    Small disconnected blobs are discarded before measuring. Falling petals are
+    exactly that, and the WebGL build's test hook draws them while the canvas
+    build's does not - without this the two renderers disagree by up to 0.15 on
+    an identical scene, and the petals (which drift above the crown) inflate the
+    height. Anything under 1% of the largest component's area is not diorama.
+    """
+    from scipy import ndimage
+
+    d = np.abs(img.astype(np.int16) - np.array(bg, np.int16)).max(axis=2)
+    mask = d > tol
+    if not mask.any():
+        return 0.0, 0, 0
+    lab, count = ndimage.label(mask)
+    areas = ndimage.sum(mask, lab, range(1, count + 1))
+    keep = np.nonzero(areas >= areas.max() * 0.01)[0] + 1
+    solid = np.isin(lab, keep)
+    ys, xs = np.nonzero(solid)
+    h = ys.max() - ys.min() + 1
+    w = xs.max() - xs.min() + 1
+    return h / w, w, h
 
 
 def save(img, name):

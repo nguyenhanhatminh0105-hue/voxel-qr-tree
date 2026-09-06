@@ -25,6 +25,10 @@ flattens into its own code:
 
 ![The flip](docs/flip.png)
 
+A single tree at full size — `https://smaran.studio`, silhouette aspect 0.963:
+
+![Sakura](docs/sakura.png)
+
 ---
 
 ## The trick
@@ -59,6 +63,8 @@ fill its module — it would turn every crown into a stack of crates. What the
 gaps must not show is *bare brown ground*; see the fallen-blossom carpet
 below.
 
+But the carving is not what made the canopy read as lace. See below.
+
 **Every dark module is a raised block, never a flat tile.** Flat tiles make
 the plot read as ink printed on a floor. Raised blocks make it read as terrain
 the tree is growing out of. Grass and soil where the crown does not reach,
@@ -69,10 +75,10 @@ still read as flat plates scattered on the slab — the exact failure raising
 them was meant to fix. They are 0.52–0.82 of a module, which is enough side
 face to register as depth from the isometric view and changes nothing overhead.
 
-**Soil sits near 5:1, not the near-black 10:1 you first reach for.** The
+**Ground sits near 3.5:1, not the near-black 10:1 you first reach for.** The
 ground layer alone reproduces the matrix, so the instinct is to make it as
-dark as possible — but 5:1 already clears the floor with two-thirds of the
-headroom to spare, and it reads as earth instead of ink.
+dark as possible — but the floor is 3:1 and every stop past it is headroom
+spent on nothing, at the cost of a floor that competes with the tree.
 
 **Every colour that can land on a dark module needs ≥3:1 contrast against the
 paving.** See below; this forces deeper tones than anyone would pick for looks.
@@ -185,6 +191,47 @@ the edge-crossing rule and the wind decay all survive unchanged.
 
 ---
 
+## Why the canopy was see-through (and it was not the carving)
+
+Roughly half the columns get carved away, so it is tempting to blame the
+matrix. The carving was innocent. Three defects in the crown fill did it:
+
+**The crown was a flat disc.** At n=25 the sakura had radius 7.35 and
+half-height 2.88 — 14.7 wide, 5.8 tall, aspect 0.39. A flat crown has *nothing
+behind any gap*, so every hole shows background. Depth along the view axis is
+what hides carving: a tall crown stacks rows behind one another and the gaps
+fill in. Crowns now run 1.18–1.29.
+
+**Leaf count scaled with footprint, not volume.** `count = density * PI*r*r`
+ignored half-height entirely, so raising the crown — the actual fix — spread
+the same leaves through more volume and made the lattice *worse*.
+
+**Rejection sampling left vertical holes.** Points were scattered through a
+ball and any landing on a light module discarded. Survivors were Poisson
+distributed per column, so some dark columns got one leaf and some got none —
+and an empty column is a hole you can see straight through.
+
+The fix replaces sampling with a **per-column fill**: walk the dark modules in
+the footprint, compute each column's vertical span from the ellipsoid, and
+stack leaves up it continuously. A column is then either solid or absent, never
+speckled. It is denser for the same leaf budget and throws away none of the
+~50% of samples that used to land on paving. Overlapping clouds merge their
+spans first, so stacked puffs do not double up.
+
+### Shell fill
+
+Filling whole spans makes leaf count scale with crown *volume*, so a version 13
+code wanted 45,000 leaves. Only a column's top is ever visible — from overhead
+you see its top face, and from 35° you see the crown's rim, whose spans are
+short anyway because that is where the ellipsoid closes. So each column fills a
+shell: `clamp(0.62 * span, 3.5, 7.5)` modules from the top down.
+
+Rim columns fill completely; interior columns keep a proportional body. A flat
+minimum alone was not enough — at a constant 3.5 the crown read as a hanging
+curtain, because the filled band tracked the top surface and left the underside
+hollow. Count now scales with footprint rather than volume: 1,684–2,978 voxels
+at 33x33 instead of 21,046.
+
 ## The fallen-blossom carpet
 
 Leaves are smaller than their module. Left alone, the gaps between them show
@@ -231,23 +278,38 @@ That puts the crown top near `0.51 n`, plus sprigs above it.
 ## Where the contrast floor overrode taste
 
 Paving is `#EDEAE3` (luminance 0.824). At a 3:1 floor, anything that can land
-on a dark module must sit at luminance ≤ 0.241. That is much darker than these
-colours want to be. Every swatch below is the deep version; the "natural
-choice" column is what a designer would actually reach for, and what it scores:
+on a dark module must sit at luminance ≤ 0.241.
+
+Two mistakes are easy here, and this project made both before making neither.
+
+**Overshooting the floor.** Shipping foliage at 5:1 or 8:1 spends headroom on
+nothing and makes the whole scene read as dark wine rather than blossom. Every
+swatch now sits just above 3.2:1.
+
+**Deriving the colour by darkening a pastel.** Multiplying toward black scales
+all three channels together, so chroma collapses along with luminance:
+`#F8C8DC` treated that way lands on `#947884`, a grey mauve. Each swatch is
+instead a *saturated hue chosen at the target luminance* — fix hue and
+saturation, solve lightness for the ratio.
 
 | swatch | shipped | ratio | natural choice | ratio |
 |---|---|---|---|---|
-| Rose | `#9E3B58` | 5.4:1 | `#F8C8DC` | **1.2:1** |
-| Jade | `#2F6B3C` | 5.3:1 | `#7BC47F` | **1.7:1** |
-| Amber | `#8A5312` | 5.3:1 | `#F2B441` | **1.5:1** |
-| Indigo | `#3A4A7C` | 7.1:1 | `#8FA8DE` | **2.0:1** |
-| Plum | `#5D3570` | 7.9:1 | `#C79BE0` | **1.9:1** |
-| Moss | `#4A5A22` | 6.3:1 | `#AFC46B` | **1.6:1** |
+| Rose | `#c1647d` | 3.25:1 | `#F8C8DC` | **1.2:1** |
+| Jade | `#4b8f5b` | 3.25:1 | `#7BC47F` | **1.7:1** |
+| Amber | `#9c7c51` | 3.23:1 | `#F2B441` | **1.5:1** |
+| Indigo | `#6182ba` | 3.23:1 | `#8FA8DE` | **2.0:1** |
+| Plum | `#ae64c0` | 3.25:1 | `#C79BE0` | **1.9:1** |
+| Moss | `#738947` | 3.24:1 | `#AFC46B` | **1.6:1** |
+
+Ground is lightened to match: soil `#90795c` at 3.44:1, grass `#618648` at
+3.49:1. A dark floor competes with the tree; the plot should recede as a plaza
+rather than read as a second pattern fighting the canopy.
 
 ![Six swatches](docs/swatches.png)
 
-Pastel pink is 1.2:1 and will not scan. The sakura is a deep rose because
-arithmetic says so, not because anyone preferred it.
+Pastel pink is 1.2:1 and will not scan — but 3.2:1 is enough, and the
+difference between 3.2:1 and 5.4:1 is the difference between cherry blossom
+and dark wine.
 
 One second-order consequence is worth calling out, because it looks like a
 style choice and is not. With every top face forced dark, shading the side
@@ -366,10 +428,13 @@ geometry checks      : 288 (no malformed faces)
 3. through camera    : 432/432 (100.0%)  (warp+blur+dim+noise+downscale)
 4. wind at t=1       : bit-identical across 3 clocks
    wind at t=0       : moving
+6. silhouette aspect : 24/24 in [0.90, 1.05]  range 0.908-1.042  (video 0.96)
 ```
 
-`canvas.html` scores identically on the same sweep: 144/144 clean, 144/144
-exact matrix reconstruction, 432/432 through the camera.
+`canvas.html` scores identically on the same sweep, including the silhouette
+range to three decimal places — the two renderers share `qr.js`, `palette.js`
+and `scene.js` verbatim, so agreement there is a check that the metric measures
+the planting rather than the renderer.
 
 The checks are:
 
@@ -383,6 +448,31 @@ The checks are:
 5. **Geometry sweep.** Every link × season × swatch, at both ends of the flip,
    checked for non-finite coordinates, zero-area faces, zero-extent voxels,
    voxels crossing a module edge, voxels on a light module, and missing faces.
+6. **Silhouette aspect.** Rendered diorama height ÷ plot width at `t=0`, which
+   must land in 0.90–1.05; the reference sits at 0.96. `stats.heightFraction`
+   is deliberately *not* used — it includes the fallen carpet, so it reads
+   healthy while the crown is a flat disc. There is a separate crown-only
+   `crownAspect` in `stats` for the same reason.
+
+### A measurement bug worth naming
+
+The silhouette metric jittered by up to 0.11 between identical runs, and the
+two renderers disagreed by 0.15 on the same scene. Neither was the scene.
+
+`shoot()` was doing `renderAt` and `toDataURL` as two separate round trips, and
+both apps keep a `requestAnimationFrame` loop running — so a frame could
+repaint the canvas in between, at the wall clock rather than the clock asked
+for, and *with falling petals*. The capture is now a single evaluate.
+
+The renderer disagreement had a second cause: the WebGL test hook draws petals
+and the canvas one does not. The metric now discards connected components under
+1% of the largest, which is what petals are. After both fixes the two builds
+agree to **0.0000** on every case — which is itself a decent check that the
+metric measures the shared planting rather than the renderer.
+
+This is the same shape of problem as the mirrored render: every decode gate was
+green throughout, because at `t=1` the wind is zero and petals have faded, so
+the race was invisible to them.
 
 ### Bugs this found
 

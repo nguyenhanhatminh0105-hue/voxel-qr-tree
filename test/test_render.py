@@ -14,6 +14,13 @@ Everything here works on pixels a real browser produced, loaded from file://.
   4. WIND             - bit-identical at t=1 across different clocks, and
                         genuinely moving at t=0.
   5. GEOMETRY         - sweep every combination for malformed faces.
+  6. SILHOUETTE       - rendered diorama height / plot width at t=0, which must
+                        land in 0.90-1.05. The reference sits at 0.96. A flat
+                        canopy drives this down, and a flat canopy is also what
+                        makes the matrix carving show through as lace, because
+                        there is nothing behind any gap. scene.stats.height-
+                        Fraction is NOT a substitute: it includes the fallen
+                        carpet, so it reads healthy while the crown is a disc.
 """
 import os
 import sys
@@ -27,7 +34,7 @@ from pyzbar import pyzbar
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-from harness import Arboretum, save, ROOT
+from harness import Arboretum, save, silhouette_aspect, ROOT
 from camera import simulate
 
 LINKS = [
@@ -113,6 +120,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--quick", action="store_true", help="one link only")
     ap.add_argument("--cam-trials", type=int, default=3)
+    ap.add_argument("--aspect-lo", type=float, default=0.90)
+    ap.add_argument("--aspect-hi", type=float, default=1.05)
     ap.add_argument("--target", default="index.html",
                     help="index.html (WebGL, primary) or canvas.html (canvas 2D)")
     args = ap.parse_args()
@@ -126,6 +135,7 @@ def main():
     matrix_perfect = matrix_n = 0
     worst_quiet = 255.0
     geom_rows = 0
+    aspects = []
     saved_cam = False
 
     with Arboretum(width=760, height=760, dpr=2, target=args.target) as arb:
@@ -165,6 +175,13 @@ def main():
                         if g["faces"] != want:
                             fails.append(f"{link[:24]} {sp}/{sw} t={t}: "
                                          f"{g['faces']} faces, expected {want}")
+
+                    if sw == SWATCHES[0]:
+                        a, _, _ = silhouette_aspect(arb.shoot(0.0, clock=1234.0))
+                        aspects.append((a, f"{link[:24]} {sp}"))
+                        if not (args.aspect_lo <= a <= args.aspect_hi):
+                            fails.append(f"silhouette aspect {a:.3f} outside "
+                                         f"[{args.aspect_lo}, {args.aspect_hi}]: {link[:24]} {sp}")
 
                     img = arb.shoot(1.0, clock=1234.0)
                     geom = arb.geom()
@@ -219,8 +236,12 @@ def main():
     print(f"   quiet zone min lum: {worst_quiet:.0f}/255 (paving ~234; must stay light)")
     print(f"3. through camera    : {pct(cam_ok, cam_n)}  "
           f"({args.cam_trials} trials each: warp+blur+dim+noise+downscale)")
+    lo = min(a for a, _ in aspects); hi = max(a for a, _ in aspects)
+    inb = sum(1 for a, _ in aspects if args.aspect_lo <= a <= args.aspect_hi)
     print(f"4. wind at t=1       : {'bit-identical across 3 clocks' if wind_static else 'NOT STATIC'}")
     print(f"   wind at t=0       : {'moving (' + str(moved) + ' channel-units)' if wind_moves else 'STATIC - BROKEN'}")
+    print(f"6. silhouette aspect : {inb}/{len(aspects)} in [{args.aspect_lo}, {args.aspect_hi}]"
+          f"   range {lo:.3f}-{hi:.3f}   (reference video 0.96)")
     print()
 
     if fails:
