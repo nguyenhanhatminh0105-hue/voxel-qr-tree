@@ -754,10 +754,14 @@ footer { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
    WCAG-style relative luminance contrast is the working proxy: anything that
    can sit over a dark module must clear MIN_RATIO against the paving colour.
 
-   That floor is not a style guide, it is a hard constraint, and it forces
-   colours well below what looks natural on screen. Pastel sakura pink is
-   about 1.9:1 against pale paving and simply will not scan; the sakura here
-   is a deep rose because arithmetic says so, not because anyone preferred it.
+   That floor is not a style guide, it is a hard constraint. Pastel sakura pink
+   is about 1.2:1 against pale paving and simply will not scan.
+
+   But the floor is 3:1, and shipping colours at 5:1 or 8:1 spends headroom on
+   nothing while making the whole scene read as dark wine. Every foliage swatch
+   here sits just above 3.2:1, picked as a saturated hue AT that luminance
+   rather than a pastel multiplied toward black - see SWATCHES for why the
+   difference matters.
 
    Two further rules keep the two colour families from converging:
      - a surface that can sit on a DARK module may only ever be varied DARKER
@@ -841,25 +845,39 @@ footer { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
   // Paving is the light module and also the canvas background, so the 4-module
   // quiet zone is the same colour as the light paving and reads as margin.
   var PAVING = '#EDEAE3';
-  /* Soil sits near 5:1 rather than the near-black 10:1 it is tempting to
-     reach for. The ground layer alone reproduces the matrix, so the instinct
-     is to make it as dark as possible - but 5:1 already clears the floor with
-     two-thirds of headroom to spare, and it reads as earth instead of ink. */
-  var SOIL = '#746249';
-  var GRASS = '#4A6B36';
+  /* Ground sits near 3.5:1, not the near-black 10:1 it is tempting to reach
+     for. The ground layer alone reproduces the matrix, so the instinct is to
+     make it as dark as possible - but the floor is 3:1, and every stop past it
+     is headroom spent on nothing. Dark ground also competes with the tree: the
+     plot should recede as a plaza, not read as a second pattern fighting the
+     canopy. */
+  var SOIL = '#90795c';
+  var GRASS = '#618648';
   var SLAB_SIDE = '#6E6152';  // never seen from overhead
 
-  /* Six foliage swatches. Every one of these is darker than its natural-looking
-     counterpart because it has to clear MIN_RATIO on its top face. The `wanted`
-     field records the colour a designer would reach for, so the report can show
-     exactly how far the floor pushed each one. */
+  /* Six foliage swatches, each sitting just above MIN_RATIO rather than well
+     past it.
+
+     HOW THESE WERE PICKED, because the obvious method produces mud. Taking a
+     pastel and darkening it toward black until it clears the floor also drains
+     its saturation: #F8C8DC treated that way lands on #947884, a grey mauve
+     that reads as dead wine rather than blossom. The multiply is the problem -
+     it scales all three channels together, so chroma collapses along with
+     luminance.
+
+     Instead each swatch is a SATURATED hue chosen AT the target luminance:
+     fix hue and saturation, then solve lightness for the ratio. That keeps the
+     colour vivid at 3.2:1 where the darkened version was muddy at 5.4:1.
+
+     `wanted` keeps the pastel a designer would reach for, so the report can
+     still show what the floor rules out. */
   var SWATCHES = [
-    { id: 'rose', name: 'Rose', wanted: '#F8C8DC', hex: '#9E3B58' },
-    { id: 'jade', name: 'Jade', wanted: '#7BC47F', hex: '#2F6B3C' },
-    { id: 'amber', name: 'Amber', wanted: '#F2B441', hex: '#8A5312' },
-    { id: 'indigo', name: 'Indigo', wanted: '#8FA8DE', hex: '#3A4A7C' },
-    { id: 'plum', name: 'Plum', wanted: '#C79BE0', hex: '#5D3570' },
-    { id: 'moss', name: 'Moss', wanted: '#AFC46B', hex: '#4A5A22' }
+    { id: 'rose', name: 'Rose', wanted: '#F8C8DC', hex: '#c1647d' },
+    { id: 'jade', name: 'Jade', wanted: '#7BC47F', hex: '#4b8f5b' },
+    { id: 'amber', name: 'Amber', wanted: '#F2B441', hex: '#9c7c51' },
+    { id: 'indigo', name: 'Indigo', wanted: '#8FA8DE', hex: '#6182ba' },
+    { id: 'plum', name: 'Plum', wanted: '#C79BE0', hex: '#ae64c0' },
+    { id: 'moss', name: 'Moss', wanted: '#AFC46B', hex: '#738947' }
   ];
 
   // Per-species surfaces that are not the swatch colour.
@@ -1057,6 +1075,13 @@ footer { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
   // drawn, so being coplanar with the slab top cannot z-fight.
   var SLAB_BOTTOM = -1.5, SLAB_TOP = -0.02;
 
+  /* Vertical depth of canopy actually filled per column. A flat minimum plus
+     a fraction of the span: rim columns (short spans) fill completely, while
+     interior columns keep a proportional body rather than a thin lid, which is
+     what stopped the crown reading as a hanging curtain. Capped so very large
+     codes stay affordable. */
+  var SHELL_MIN = 3.5, SHELL_FRAC = 0.62, SHELL_MAX = 7.5;
+
   var SPECIES = [
     { id: 'sakura', season: 'Spring', name: 'Sakura', fall: 'petals' },
     { id: 'oak', season: 'Summer', name: 'Oak', fall: 'seeds' },
@@ -1115,6 +1140,9 @@ footer { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
     this.rnd = rnd;
     this.isDark = makeDark(matrix);
     this.out = [];
+    this.spans = {};
+    this.crownTop = -Infinity;
+    this.crownBottom = Infinity;
     this.claimed = [];
     for (var i = 0; i < this.n; i++) this.claimed.push(new Array(this.n).fill(false));
   }
@@ -1123,46 +1151,101 @@ footer { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
     if (mx >= 0 && my >= 0 && mx < this.n && my < this.n) this.claimed[my][mx] = true;
   };
 
-  /* Scatter foliage through an ellipsoid. Cells outside the matrix or on light
-     modules simply produce nothing - that is the carving. Several samples can
-     land in the same column at different heights, which gives the "several per
-     column at varied heights" texture. */
-  Ctx.prototype.cloud = function (cx, cy, cz, r, halfH, density, sizeLo, sizeHi) {
-    var rnd = this.rnd;
-    var count = Math.round(density * Math.PI * r * r);
-    for (var i = 0; i < count; i++) {
-      var ux, uy, uz, m;
-      do {
-        ux = rnd() * 2 - 1; uy = rnd() * 2 - 1; uz = rnd() * 2 - 1;
-        m = ux * ux + uy * uy + uz * uz;
-      } while (m > 1);
-      var mx = Math.floor(cx + ux * r), my = Math.floor(cy + uy * r);
-      if (!this.isDark(mx, my)) continue;
-      this.claim(mx, my);
-      var size = sizeLo + rnd() * (sizeHi - sizeLo);
-      // height close to the plan size: flat discs stack into visible gaps,
-      // roughly cubic leaves merge into a mass
-      place(this.out, mx, my, cz + uz * halfH, size, size * (0.95 + rnd() * 0.6),
-        this.pal.mat.leaf, 'leaf', rnd);
+  /* --- canopy -----------------------------------------------------------
+
+     Crowns are built in two phases: each cloud RECORDS a vertical span per
+     column, then growCanopy() fills every column once. Three reasons.
+
+     1. COLUMNS, NOT SAMPLES. The old version scattered points through a ball
+        and discarded any landing on a light module. Survivors were Poisson
+        distributed per column, so some dark columns got one leaf and some got
+        none - and an empty column is a hole you can see straight through. That
+        speckle, not the matrix carving, is what made the canopy read as lace.
+        A column filled continuously is either solid or absent, never speckled.
+        It also stops throwing away the ~50% of samples that landed on paving.
+
+     2. VOLUME, NOT FOOTPRINT. Leaf count used to scale with PI*r*r and ignore
+        halfH entirely, so making a crown taller - which is the actual fix for
+        see-through foliage - spread the same leaves through more volume and
+        made the lattice worse. Filling by column makes count track volume
+        automatically, so height and density stop fighting each other.
+
+     3. OVERLAPPING CLOUDS DON'T DOUBLE UP. Species stack several clouds; where
+        they overlap, per-cloud filling would stack two sets of leaves in the
+        same column. Merging spans first means one pass, one stack.
+
+     The carving is untouched: light modules still produce nothing. What changes
+     is that surviving columns are opaque, and a crown with real depth along the
+     view axis puts foliage behind every gap. */
+  Ctx.prototype.addSpan = function (mx, my, zBot, zTop) {
+    if (!this.isDark(mx, my)) return;
+    if (zTop - zBot < 0.15) return;
+    this.claim(mx, my);
+    var k = my * this.n + mx;
+    (this.spans[k] || (this.spans[k] = [])).push([zBot, zTop]);
+  };
+
+  /* Record one ellipsoid. `lowBound` is -1 for a full ellipsoid or 0 for a
+     dome (upper half only). */
+  Ctx.prototype.cloud = function (cx, cy, cz, r, halfH, lowBound) {
+    if (lowBound === undefined) lowBound = -1;
+    var x0 = Math.floor(cx - r), x1 = Math.ceil(cx + r);
+    var y0 = Math.floor(cy - r), y1 = Math.ceil(cy + r);
+    for (var my = y0; my <= y1; my++) {
+      for (var mx = x0; mx <= x1; mx++) {
+        var dx = (mx + 0.5 - cx) / r, dy = (my + 0.5 - cy) / r;
+        var q = dx * dx + dy * dy;
+        if (q >= 1) continue;
+        var span = halfH * Math.sqrt(1 - q);   // ellipsoid half-extent here
+        this.addSpan(mx, my, cz + lowBound * span, cz + span);
+      }
     }
   };
 
-  // A dome: the upper half of an ellipsoid.
-  Ctx.prototype.dome = function (cx, cy, cz, r, halfH, density, sizeLo, sizeHi) {
-    var rnd = this.rnd;
-    var count = Math.round(density * Math.PI * r * r);
-    for (var i = 0; i < count; i++) {
-      var ux, uy, uz, m;
-      do {
-        ux = rnd() * 2 - 1; uy = rnd() * 2 - 1; uz = rnd();
-        m = ux * ux + uy * uy + uz * uz;
-      } while (m > 1);
-      var mx = Math.floor(cx + ux * r), my = Math.floor(cy + uy * r);
-      if (!this.isDark(mx, my)) continue;
-      this.claim(mx, my);
-      var size = sizeLo + rnd() * (sizeHi - sizeLo);
-      place(this.out, mx, my, cz + uz * halfH, size, size * 1.05,
-        this.pal.mat.leaf, 'leaf', rnd);
+  Ctx.prototype.dome = function (cx, cy, cz, r, halfH) {
+    this.cloud(cx, cy, cz, r, halfH, 0);
+  };
+
+  /* Merge each column's spans and stack leaves up them continuously.
+     `pack` is the vertical advance as a fraction of leaf height: below 1 the
+     stack overlaps, which is what makes a column opaque. */
+  Ctx.prototype.growCanopy = function (pack, sizeLo, sizeHi) {
+    var rnd = this.rnd, n = this.n;
+    var keys = Object.keys(this.spans).map(Number).sort(function (a, b) { return a - b; });
+    for (var i = 0; i < keys.length; i++) {
+      var k = keys[i], mx = k % n, my = (k - mx) / n;
+      var iv = this.spans[k].slice().sort(function (a, b) { return a[0] - b[0]; });
+      var merged = [], cur = iv[0].slice();
+      for (var j = 1; j < iv.length; j++) {
+        if (iv[j][0] <= cur[1]) cur[1] = Math.max(cur[1], iv[j][1]);
+        else { merged.push(cur); cur = iv[j].slice(); }
+      }
+      merged.push(cur);
+      for (var m = 0; m < merged.length; m++) {
+        var zBot = merged[m][0], zTop = merged[m][1];
+        if (zBot < this.crownBottom) this.crownBottom = zBot;
+        if (zTop > this.crownTop) this.crownTop = zTop;
+        /* Fill a shell, not the whole span. Only a column's top is ever seen:
+           from overhead you see its top face, and from 35 degrees you see the
+           crown's rim - whose spans are short anyway, since they sit where the
+           ellipsoid closes. Everything deeper is occluded by the columns in
+           front of it.
+
+           This is also what stops the leaf count exploding. Filling whole
+           spans makes it scale with crown VOLUME, so a version 13 code wanted
+           45,000 leaves; a fixed-depth shell scales with crown FOOTPRINT
+           instead. Same silhouette, same opacity, an order of magnitude fewer
+           voxels on large codes. */
+        var shell = Math.min(SHELL_MAX,
+          Math.max(SHELL_MIN, (zTop - zBot) * SHELL_FRAC));
+        var z = Math.max(zBot, zTop - shell);
+        while (z < zTop) {
+          var size = sizeLo + rnd() * (sizeHi - sizeLo);
+          var h = size * (0.95 + rnd() * 0.6);
+          place(this.out, mx, my, z, size, h, this.pal.mat.leaf, 'leaf', rnd);
+          z += h * pack;
+        }
+      }
     }
   };
 
@@ -1228,90 +1311,107 @@ footer { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
       for (var mx = 0; mx < n; mx++) {
         if (!this.matrix[my][mx]) continue;
         var nz = cellNoise(mx, my);
-        var mat;
+        var mat, isGrass = false;
         if (this.claimed[my][mx]) {
           mat = nz > 0.5 ? pal.mat.fallen : pal.mat.fallen2;
         } else {
           // brown soil where the crown does not reach, grass elsewhere
-          mat = nz > 0.45 ? pal.mat.grass : pal.mat.soil;
+          isGrass = nz > 0.45;
+          mat = isGrass ? pal.mat.grass : pal.mat.soil;
         }
         // Chunky enough to read as terrain. At 0.26 the blocks look like flat
         // plates scattered on the slab, which is the very thing raising them
         // was meant to fix.
-        place(this.out, mx, my, SLAB_TOP, 1, 0.52 + nz * 0.30, mat, 'ground', rnd);
+        var bh = 0.52 + nz * 0.30;
+        place(this.out, mx, my, SLAB_TOP, 1, bh, mat, 'ground', rnd);
+        /* Grass gets visible blades. A flat-topped block reads as a tile even
+           when it is raised; a couple of thin spikes on top read as grass.
+           They sit on an already-dark module, so overhead they change nothing. */
+        if (isGrass && rnd() < 0.6) {
+          var blades = 1 + (rnd() < 0.5 ? 1 : 0);
+          for (var b = 0; b < blades; b++) {
+            place(this.out, mx, my, SLAB_TOP + bh, 0.10 + rnd() * 0.10,
+              0.22 + rnd() * 0.34, pal.mat.grass, 'blade', rnd);
+          }
+        }
       }
     }
   };
 
   // --- species -----------------------------------------------------------
+  /* Proportions are tuned against a measured silhouette aspect (rendered
+     diorama height / plot width at t=0), not by eye. The target band is
+     0.90-1.05; a crown that tops out around 0.9n lands there. Anything much
+     flatter reads as a disc floating over a plaza, and - because a flat crown
+     has nothing behind its gaps - it is also what makes the matrix carving
+     show through as lace.
 
-  /* Spring. Short trunk, broad crown of several overlapping puffs at
-     staggered heights - deliberately flat and layered rather than one ball,
-     which is what separates its silhouette from the oak. Proportioned so the
-     crown top lands near 0.51 n: a crown at 0.35 n reads as a shrub on a
-     large empty plaza however good the foliage is. */
+     Every species leaves clear air between the ground blocks and the crown's
+     underside, so the trunk is visible for roughly a fifth of tree height. */
+
+  /* Spring. Short trunk, broad crown of overlapping puffs at staggered
+     heights - layered rather than one ball, which is what separates its
+     silhouette from the oak. */
   function plantSakura(c, n, cx, cy) {
     var rnd = c.rnd;
-    var trunkH = n * 0.20;
-    var R = n * 0.30 * 0.98;
-    c.trunk(cx, cy, 0, trunkH, 0.46);
-
-    c.cloud(cx + 0.5, cy + 0.5, trunkH + n * 0.19, R, n * 0.115, 2.4, 0.34, 0.56);
+    var trunkH = n * 0.26;
+    var R = n * 0.32;
+    c.trunk(cx, cy, 0, trunkH, 0.62);
+    c.cloud(cx + 0.5, cy + 0.5, trunkH + n * 0.32, R, n * 0.34);
     for (var i = 0; i < 4; i++) {
       var a = (i / 4) * Math.PI * 2 + rnd() * 0.5;
-      c.cloud(cx + 0.5 + Math.cos(a) * R * 0.60,
-              cy + 0.5 + Math.sin(a) * R * 0.60,
-              trunkH + n * (0.12 + rnd() * 0.07),
-              R * 0.66, n * 0.10, 2.4, 0.34, 0.56);
+      c.cloud(cx + 0.5 + Math.cos(a) * R * 0.55,
+              cy + 0.5 + Math.sin(a) * R * 0.55,
+              trunkH + n * (0.24 + rnd() * 0.12), R * 0.66, n * 0.17);
     }
-    c.cloud(cx + 0.5, cy + 0.5, trunkH + n * 0.31, R * 0.54, n * 0.085, 2.4, 0.30, 0.50);
+    c.cloud(cx + 0.5, cy + 0.5, trunkH + n * 0.71, R * 0.54, n * 0.18);
   }
 
   /* Summer. Thick trunk, heavy forking limbs, deep rounded crown - taller and
      lumpier than the sakura. */
   function plantOak(c, n, cx, cy) {
     var rnd = c.rnd;
-    var trunkH = n * 0.24;
-    var R = n * 0.30;
-    c.trunk(cx, cy, 0, trunkH, 0.70);
+    var trunkH = n * 0.28;
+    var R = n * 0.34;
+    c.trunk(cx, cy, 0, trunkH, 0.82);
     c.trunk(cx + 1, cy, 0, trunkH * 0.7, 0.42);
     c.trunk(cx, cy + 1, 0, trunkH * 0.7, 0.42);
 
     var limbs = 5 + Math.floor(rnd() * 2);
     for (var i = 0; i < limbs; i++) {
       c.limb(cx + 0.5, cy + 0.5, (i / limbs) * Math.PI * 2 + rnd() * 0.6,
-        R * (0.5 + rnd() * 0.4), trunkH * 0.62, n * 0.09, 0.48);
+        R * (0.5 + rnd() * 0.4), trunkH * 0.66, n * 0.10, 0.48);
     }
-    c.cloud(cx + 0.5, cy + 0.5, trunkH + n * 0.20, R, n * 0.20, 2.4, 0.38, 0.62);
+    c.cloud(cx + 0.5, cy + 0.5, trunkH + n * 0.36, R, n * 0.34);
     for (var j = 0; j < 4; j++) {
       var a = (j / 4) * Math.PI * 2 + rnd() * 0.7;
-      c.cloud(cx + 0.5 + Math.cos(a) * R * 0.55,
-              cy + 0.5 + Math.sin(a) * R * 0.55,
-              trunkH + n * (0.16 + rnd() * 0.12),
-              R * 0.62, n * 0.15, 2.4, 0.38, 0.62);
+      c.cloud(cx + 0.5 + Math.cos(a) * R * 0.52,
+              cy + 0.5 + Math.sin(a) * R * 0.52,
+              trunkH + n * (0.31 + rnd() * 0.14), R * 0.60, n * 0.24);
     }
+    c.cloud(cx + 0.5, cy + 0.5, trunkH + n * 0.71, R * 0.45, n * 0.18);
   }
 
   /* Autumn. Tall pale trunk, bare for most of its height, then a sparse open
-     crown of scattered clumps with big gaps between them. The near-white bark
-     lives entirely on the side faces - see palette.js. */
+     crown of scattered clumps with big gaps between them. The clumps are
+     individually solid - the openness comes from separating them, not from
+     thinning each one, which would just bring the lace back. */
   function plantGum(c, n, cx, cy) {
     var rnd = c.rnd;
-    var trunkH = n * 0.42;
+    var trunkH = n * 0.585;
     c.trunk(cx, cy, 0, trunkH, 0.56);   // wide enough for the pale bark to read
 
-    var clumps = 8 + Math.floor(rnd() * 3);
+    var clumps = 7 + Math.floor(rnd() * 3);
     for (var i = 0; i < clumps; i++) {
       var a = rnd() * Math.PI * 2;
-      var rad = (0.05 + rnd() * 0.20) * n;
+      var rad = (0.04 + rnd() * 0.20) * n;
       c.cloud(cx + 0.5 + Math.cos(a) * rad,
               cy + 0.5 + Math.sin(a) * rad,
-              trunkH * (0.80 + rnd() * 0.36),
-              n * 0.11, n * 0.075, 3.4, 0.30, 0.50);
+              trunkH + n * (0.04 + rnd() * 0.34), n * 0.115, n * 0.140);
     }
     for (var b = 0; b < 3; b++) {
       c.limb(cx + 0.5, cy + 0.5, rnd() * Math.PI * 2, n * 0.10,
-        trunkH * 0.86, n * 0.05, 0.28);
+        trunkH * 0.88, n * 0.06, 0.30);
     }
   }
 
@@ -1319,17 +1419,19 @@ footer { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
      its outer rim, nearly to the ground. */
   function plantWillow(c, n, cx, cy) {
     var rnd = c.rnd;
-    var trunkH = n * 0.22;
-    var R = n * 0.29;
-    var domeZ = trunkH + n * 0.13;
-    c.trunk(cx, cy, 0, trunkH, 0.54);
-    c.dome(cx + 0.5, cy + 0.5, domeZ, R, n * 0.16, 5.2, 0.34, 0.56);
+    var trunkH = n * 0.30;
+    var R = n * 0.36;
+    var domeZ = trunkH + n * 0.40;
+    c.trunk(cx, cy, 0, trunkH, 0.66);
+    // flat-bottomed rather than a true dome: -0.75 keeps the underside high
+    // enough to leave the trunk visible while still reading as a canopy.
+    c.cloud(cx + 0.5, cy + 0.5, domeZ, R, n * 0.45, -0.75);
 
     var strands = Math.round(n * 1.4);
     for (var t = 0; t < strands; t++) {
       var a = rnd() * Math.PI * 2;
       var r = R * (0.60 + rnd() * 0.42);
-      var top = domeZ - n * 0.01;
+      var top = domeZ - n * 0.02;
       c.tendril(Math.floor(cx + 0.5 + Math.cos(a) * r),
                 Math.floor(cy + 0.5 + Math.sin(a) * r),
                 top, Math.max(1.0, top - (0.02 + rnd() * 0.07) * n));
@@ -1350,12 +1452,31 @@ footer { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
     var centre = nearestDark(matrix, (n - 1) / 2, (n - 1) / 2);
     // Plant first, so groundBlocks knows which modules are under the crown.
     (PLANTERS[opts.species] || plantOak)(c, n, centre[0], centre[1]);
+    // One pass over the merged spans, after every cloud has been recorded.
+    c.growCanopy(0.95, 0.48, 0.74);
     var canopy = c.out.length;
     c.groundBlocks();
 
     var maxZ = 0, claimedCount = 0;
     for (var i = 0; i < c.out.length; i++) maxZ = Math.max(maxZ, c.out[i].z + c.out[i].h);
     for (var y = 0; y < n; y++) for (var x = 0; x < n; x++) if (c.claimed[y][x]) claimedCount++;
+
+    /* Crown-only geometry. heightFraction covers the whole diorama including
+       the fallen carpet, so it can look healthy while the crown itself is a
+       flat disc - which is exactly the failure that made the canopy lacy.
+       These measure the crown alone. */
+    var cxMin = Infinity, cxMax = -Infinity, cyMin = Infinity, cyMax = -Infinity;
+    for (var v = 0; v < c.out.length; v++) {
+      var vx = c.out[v];
+      if (vx.kind !== 'leaf') continue;
+      if (vx.x < cxMin) cxMin = vx.x;
+      if (vx.x + vx.w > cxMax) cxMax = vx.x + vx.w;
+      if (vx.y < cyMin) cyMin = vx.y;
+      if (vx.y + vx.d > cyMax) cyMax = vx.y + vx.d;
+    }
+    var crownW = isFinite(cxMin) ? Math.max(cxMax - cxMin, cyMax - cyMin) : 0;
+    var crownH = isFinite(c.crownTop) ? c.crownTop - c.crownBottom : 0;
+    var groundTop = SLAB_TOP + 0.82;
 
     return {
       matrix: matrix, n: n, palette: pal, voxels: c.out, maxZ: maxZ,
@@ -1365,7 +1486,16 @@ footer { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
         canopy: canopy,
         ground: c.out.length - canopy,
         claimed: claimedCount,
-        heightFraction: maxZ / n
+        heightFraction: maxZ / n,
+        crownTop: isFinite(c.crownTop) ? c.crownTop : 0,
+        crownBottom: isFinite(c.crownBottom) ? c.crownBottom : 0,
+        crownWidth: crownW,
+        // 1.0 is a ball; well under 1 is a disc you can see through
+        crownAspect: crownW > 0 ? crownH / crownW : 0,
+        // clear air between the ground blocks and the crown's underside
+        trunkGap: (isFinite(c.crownBottom) ? c.crownBottom : 0) - groundTop,
+        trunkVisibleFraction: maxZ > 0
+          ? ((isFinite(c.crownBottom) ? c.crownBottom : 0) - groundTop) / maxZ : 0
       }
     };
   }

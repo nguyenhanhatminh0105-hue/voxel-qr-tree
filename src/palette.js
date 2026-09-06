@@ -6,10 +6,14 @@
    WCAG-style relative luminance contrast is the working proxy: anything that
    can sit over a dark module must clear MIN_RATIO against the paving colour.
 
-   That floor is not a style guide, it is a hard constraint, and it forces
-   colours well below what looks natural on screen. Pastel sakura pink is
-   about 1.9:1 against pale paving and simply will not scan; the sakura here
-   is a deep rose because arithmetic says so, not because anyone preferred it.
+   That floor is not a style guide, it is a hard constraint. Pastel sakura pink
+   is about 1.2:1 against pale paving and simply will not scan.
+
+   But the floor is 3:1, and shipping colours at 5:1 or 8:1 spends headroom on
+   nothing while making the whole scene read as dark wine. Every foliage swatch
+   here sits just above 3.2:1, picked as a saturated hue AT that luminance
+   rather than a pastel multiplied toward black - see SWATCHES for why the
+   difference matters.
 
    Two further rules keep the two colour families from converging:
      - a surface that can sit on a DARK module may only ever be varied DARKER
@@ -93,25 +97,39 @@
   // Paving is the light module and also the canvas background, so the 4-module
   // quiet zone is the same colour as the light paving and reads as margin.
   var PAVING = '#EDEAE3';
-  /* Soil sits near 5:1 rather than the near-black 10:1 it is tempting to
-     reach for. The ground layer alone reproduces the matrix, so the instinct
-     is to make it as dark as possible - but 5:1 already clears the floor with
-     two-thirds of headroom to spare, and it reads as earth instead of ink. */
-  var SOIL = '#746249';
-  var GRASS = '#4A6B36';
+  /* Ground sits near 3.5:1, not the near-black 10:1 it is tempting to reach
+     for. The ground layer alone reproduces the matrix, so the instinct is to
+     make it as dark as possible - but the floor is 3:1, and every stop past it
+     is headroom spent on nothing. Dark ground also competes with the tree: the
+     plot should recede as a plaza, not read as a second pattern fighting the
+     canopy. */
+  var SOIL = '#90795c';
+  var GRASS = '#618648';
   var SLAB_SIDE = '#6E6152';  // never seen from overhead
 
-  /* Six foliage swatches. Every one of these is darker than its natural-looking
-     counterpart because it has to clear MIN_RATIO on its top face. The `wanted`
-     field records the colour a designer would reach for, so the report can show
-     exactly how far the floor pushed each one. */
+  /* Six foliage swatches, each sitting just above MIN_RATIO rather than well
+     past it.
+
+     HOW THESE WERE PICKED, because the obvious method produces mud. Taking a
+     pastel and darkening it toward black until it clears the floor also drains
+     its saturation: #F8C8DC treated that way lands on #947884, a grey mauve
+     that reads as dead wine rather than blossom. The multiply is the problem -
+     it scales all three channels together, so chroma collapses along with
+     luminance.
+
+     Instead each swatch is a SATURATED hue chosen AT the target luminance:
+     fix hue and saturation, then solve lightness for the ratio. That keeps the
+     colour vivid at 3.2:1 where the darkened version was muddy at 5.4:1.
+
+     `wanted` keeps the pastel a designer would reach for, so the report can
+     still show what the floor rules out. */
   var SWATCHES = [
-    { id: 'rose', name: 'Rose', wanted: '#F8C8DC', hex: '#9E3B58' },
-    { id: 'jade', name: 'Jade', wanted: '#7BC47F', hex: '#2F6B3C' },
-    { id: 'amber', name: 'Amber', wanted: '#F2B441', hex: '#8A5312' },
-    { id: 'indigo', name: 'Indigo', wanted: '#8FA8DE', hex: '#3A4A7C' },
-    { id: 'plum', name: 'Plum', wanted: '#C79BE0', hex: '#5D3570' },
-    { id: 'moss', name: 'Moss', wanted: '#AFC46B', hex: '#4A5A22' }
+    { id: 'rose', name: 'Rose', wanted: '#F8C8DC', hex: '#c1647d' },
+    { id: 'jade', name: 'Jade', wanted: '#7BC47F', hex: '#4b8f5b' },
+    { id: 'amber', name: 'Amber', wanted: '#F2B441', hex: '#9c7c51' },
+    { id: 'indigo', name: 'Indigo', wanted: '#8FA8DE', hex: '#6182ba' },
+    { id: 'plum', name: 'Plum', wanted: '#C79BE0', hex: '#ae64c0' },
+    { id: 'moss', name: 'Moss', wanted: '#AFC46B', hex: '#738947' }
   ];
 
   // Per-species surfaces that are not the swatch colour.
