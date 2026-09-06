@@ -55,7 +55,8 @@
   var PITCH_START = Math.atan(1 / Math.SQRT2), PITCH_END = 90 * DEG;
   var QUIET = 4;
   var SLAB_BOTTOM = -1.5, SLAB_TOP = -0.02;
-  var WIND_AMP = 0.020, WIND_FREQ = 0.0011, WIND_DIR = [0.82, 0.57];
+  // WIND_AMP is displacement in modules at the crown top, for a leaf.
+  var WIND_AMP = 0.50, WIND_FREQ = 0.0011, WIND_DIR = [0.82, 0.57];
   var EPS_FACE = 1e-6;
 
   var reduceMotion = window.matchMedia &&
@@ -197,10 +198,15 @@
       var v = boxes[b];
       var lo = 0, hi = 0;
       if (amp !== 0) {
+        /* swayLo/swayHi are precomputed in scene.js as
+           stiffness x (z / maxZ)^1.4. Keeping the law there rather than
+           repeating pow(z, 1.4) here is what lets both renderers obey the same
+           wind: normalised by tree height so a big code does not sway harder,
+           and stiffened per kind so trunks barely move. The slab is appended
+           to `boxes` without them, hence the || 0. */
         var s = Math.sin(time * WIND_FREQ + v.phase);
-        lo = amp * Math.pow(v.z > 0 ? v.z : 0, 1.4) * s;
-        var zt = v.z + v.h;
-        hi = amp * Math.pow(zt > 0 ? zt : 0, 1.4) * s;
+        lo = amp * (v.swayLo || 0) * s;
+        hi = amp * (v.swayHi || 0) * s;
       }
       var kx = (hi - lo) * WIND_DIR[0], ky = (hi - lo) * WIND_DIR[1];
       _m.set(

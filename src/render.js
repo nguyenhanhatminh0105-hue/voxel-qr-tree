@@ -45,7 +45,8 @@
   var EPS_FACE = 1e-6;            // below this a face is edge-on: do not draw
   var EPS_AREA = 1e-4;            // projected area floor, catches degenerate quads
   var WIND_FREQ = 0.0011;
-  var WIND_AMP = 0.020;
+  // Displacement in modules at the crown top, for a leaf (stiffness 1).
+  var WIND_AMP = 0.50;
   var WIND_DIR = [0.82, 0.57];
 
   function easeInOutCubic(t) {
@@ -101,12 +102,17 @@
     return ((x * cam.sy + y * cam.cy) * cam.sp - z * cam.cp) * cam.scale + cam.oy;
   }
 
-  /* Horizontal displacement of the wind field at a given height. Zero at the
-     ground, so tiles and the slab never move and the ground cache stays valid.
-     Returns [0, 0] exactly when amp is 0. */
-  function windAt(z, phase, time, amp) {
+  /* Horizontal displacement of the wind field.
+
+     `sway` is precomputed per voxel end in scene.js: stiffness x (z/maxZ)^1.4.
+     Keeping the law there means both renderers obey it rather than each
+     reimplementing pow(z, 1.4), and normalising by maxZ makes the sway a
+     fraction of tree height so a big code does not get a windier tree.
+     Ground blocks carry stiffness 0, so the ground never moves and the cache
+     stays valid. Returns exactly 0 when amp is 0. */
+  function windAt(sway, phase, time, amp) {
     if (amp === 0) return 0;
-    return amp * Math.pow(z > 0 ? z : 0, 1.4) * Math.sin(time * WIND_FREQ + phase);
+    return amp * sway * Math.sin(time * WIND_FREQ + phase);
   }
 
   function shoelace(pts) {
@@ -121,8 +127,8 @@
      Exposed (via collectFaces) so the test harness can sweep every link x
      species x swatch combination for malformed geometry without rasterising. */
   function boxFaces(out, cam, v, time, amp) {
-    var bd = windAt(v.z, v.phase, time, amp);
-    var td = windAt(v.z + v.h, v.phase, time, amp);
+    var bd = windAt(v.swayLo || 0, v.phase, time, amp);
+    var td = windAt(v.swayHi || 0, v.phase, time, amp);
     var bx = bd * WIND_DIR[0], by = bd * WIND_DIR[1];
     var tx = td * WIND_DIR[0], ty = td * WIND_DIR[1];
 

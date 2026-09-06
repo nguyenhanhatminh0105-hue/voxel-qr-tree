@@ -8,13 +8,14 @@ Two builds, same behaviour, same test suite:
 
 | file | renderer | size | frame cost | dependencies |
 |---|---|---|---|---|
-| **`index.html`** | WebGL, three.js r180 vendored inline, InstancedMesh | 765 KB | 0.6 ms | none at runtime |
-| `canvas.html` | canvas 2D, painter's algorithm | 73 KB | 9.4 ms | none at all |
+| **`index.html`** | WebGL, three.js r180 vendored inline, InstancedMesh | 765 KB | 1.3 ms | none at runtime |
+| `canvas.html` | canvas 2D, painter's algorithm | 73 KB | 23 ms | none at all |
 
 Both are single files and both run from a `file://` URL with no network access.
-Open either directly in a browser. (Frame cost measured on the heaviest scene,
-1,646 voxels at 33x33; the WebGL figure is software-rendered SwiftShader, so a
-real GPU is faster still.)
+Open either directly in a browser. (Frame cost is the worst case over every
+species at 25x25 through 37x37 — 4,472 voxels — measured after a warm-up in a
+fresh page. The WebGL figure is software-rendered SwiftShader, so a real GPU is
+faster still.)
 
 ![Four species](docs/trees.png)
 
@@ -98,8 +99,26 @@ paving — unusable on a top face, fine on a side.
 **Wind decays to exactly zero in the code view.** Horizontal sway moves leaves
 off their modules and destroys the code. Amplitude is scaled by `(1 - t)²`, and
 each voxel is *sheared* between its base and its top rather than translated, so
-trees bend instead of sliding. Displacement grows as `height^1.4` with a
-per-voxel phase hashed from position.
+trees bend instead of sliding.
+
+Three details that are easy to get wrong, and were:
+
+- **Phase is per COLUMN, not per voxel.** Hashing `z` into it gave every voxel
+  in a stack its own phase, so a trunk's nine bark segments displaced
+  independently and the trunk *split at its seams* — two abutting segments at
+  +0.193 and −0.018 in the same instant, a 0.21-module tear. It also made the
+  canopy boil rather than sway. Phase per column means a column moves as one
+  piece and neighbours lag into a wave.
+- **Height is normalised by `maxZ`.** Using absolute `z` made displacement grow
+  with the tree, so a bigger code got a windier tree: 2.22 modules of crown
+  sway at n=25 rising to 3.26 at n=33. As a fraction of tree height it is
+  scale-free — 0.500 modules at both.
+- **Stiffness is per kind.** Bark and leaf obeying one law made trunks sway
+  like saplings. `bark 0.15, leaf 1.0, blade 0.4, ground 0` — the trunk now
+  moves 0.009 modules and the ground exactly zero.
+
+The law lives in `scene.js` as a precomputed per-voxel coefficient, so both
+renderers obey it instead of each reimplementing `pow(z, 1.4)`.
 
 **A 4-module quiet zone** is reserved as the camera goes overhead, and the
 canvas background is flooded with the paving colour so the margin reads light.
@@ -222,19 +241,23 @@ speckled. It is denser for the same leaf budget and throws away none of the
 ~50% of samples that used to land on paving. Overlapping clouds merge their
 spans first, so stacked puffs do not double up.
 
-### Shell fill
+### Shell fill, at both ends
 
 Filling whole spans makes leaf count scale with crown *volume*, so a version 13
-code wanted 45,000 leaves. Only a column's top is ever visible — from overhead
-you see its top face, and from 35° you see the crown's rim, whose spans are
-short anyway because that is where the ellipsoid closes. So each column fills a
-shell: `clamp(0.62 * span, 3.5, 7.5)` modules from the top down.
+code wanted 45,000 leaves. Each column therefore fills a shell rather than its
+whole span: `clamp(0.62 * span, 3.5, 7.5)` modules from the top, plus 0.6x that
+from the bottom.
 
-Rim columns fill completely; interior columns keep a proportional body. A flat
-minimum alone was not enough — at a constant 3.5 the crown read as a hanging
-curtain, because the filled band tracked the top surface and left the underside
-hollow. Count now scales with footprint rather than volume: 1,684–2,978 voxels
-at 33x33 instead of 21,046.
+**The bottom half is not optional.** A top-only shell was justified on the
+grounds that deeper leaves are occluded by the columns in front of them. That
+premise is false at 35° elevation — the columns in front were shelled away too,
+so nothing is left to do the occluding and you look straight under the dome and
+out the other side. Measured on the sakura at n=25, the crown carried a 6.4
+module cap on a 16.9 module span and floated 5.45 modules above the trunk top.
+
+The lower shell is thinner than the upper one because less of the underside is
+ever seen. Both scale with span, so the fill still tracks crown *footprint*
+rather than volume: 4,024–4,472 voxels at 37x37 instead of 21,046.
 
 ## The fallen-blossom carpet
 
@@ -459,6 +482,14 @@ The checks are:
    is deliberately *not* used — it includes the fallen carpet, so it reads
    healthy while the crown is a flat disc. There is a separate crown-only
    `crownAspect` in `stats` for the same reason.
+
+   Tuning this against a handful of links is not enough. The matrix decides
+   which columns near the crown apex survive carving, so the measurement varies
+   by payload — the gum spread 0.136 across links, most of the band, and the one
+   case that failed was a link absent from the tuning set. Where a species'
+   apex was set by randomly placed clumps, one clump is now anchored on the
+   trunk column, which is dark by construction; that pins the top and cut the
+   spread to 0.102.
 
 Recordings are driven through `renderAt(t, clock)` with a fixed clock step
 rather than screen captured, so they are deterministic and the wind animates at
