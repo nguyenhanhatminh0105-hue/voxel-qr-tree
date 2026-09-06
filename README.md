@@ -23,7 +23,11 @@ flattens into its own code:
 
 ![The same four, straight down](docs/codes.png)
 
-![The flip](docs/flip.png)
+![The flip](docs/flip.gif)
+
+The flip in motion — wind and petals at rest, decaying to exactly zero as the
+camera swings overhead. Also as video: [`docs/flip.mp4`](docs/flip.mp4)
+(one tree) and [`docs/seasons.mp4`](docs/seasons.mp4) (all four).
 
 A single tree at full size — `https://smaran.studio`, silhouette aspect 0.963:
 
@@ -401,6 +405,8 @@ python test/test_qr_decode.py                     # shipped matrices, ZBar
 python test/test_render.py                        # WebGL, full sweep
 python test/test_render.py --target canvas.html   # canvas 2D, full sweep
 python test/shoot.py                              # preview sheets into out/
+python test/record.py --gif                       # docs/flip.mp4 + flip.gif
+python test/record.py --seasons --out docs/seasons.mp4
 ```
 
 **Do not trust `cv2.QRCodeDetector`** (the legacy OpenCV one). It fails on
@@ -453,6 +459,12 @@ The checks are:
    is deliberately *not* used — it includes the fallen carpet, so it reads
    healthy while the crown is a flat disc. There is a separate crown-only
    `crownAspect` in `stats` for the same reason.
+
+Recordings are driven through `renderAt(t, clock)` with a fixed clock step
+rather than screen captured, so they are deterministic and the wind animates at
+the intended rate however slowly the capture runs. 31% of the frames in each
+clip still decode after h.264 compression — that is the share sitting at or
+near `t=1`.
 
 ### A measurement bug worth naming
 
