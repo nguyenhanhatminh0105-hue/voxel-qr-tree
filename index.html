@@ -845,14 +845,18 @@ footer { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
   // Paving is the light module and also the canvas background, so the 4-module
   // quiet zone is the same colour as the light paving and reads as margin.
   var PAVING = '#EDEAE3';
-  /* Ground sits near 3.5:1, not the near-black 10:1 it is tempting to reach
-     for. The ground layer alone reproduces the matrix, so the instinct is to
-     make it as dark as possible - but the floor is 3:1, and every stop past it
-     is headroom spent on nothing. Dark ground also competes with the tree: the
-     plot should recede as a plaza, not read as a second pattern fighting the
-     canopy. */
-  var SOIL = '#90795c';
-  var GRASS = '#618648';
+  /* Ground sits just above the 3:1 floor, not the near-black 10:1 it is
+     tempting to reach for. The ground layer alone reproduces the matrix, so
+     the instinct is to make it as dark as possible - but every stop past the
+     floor is headroom spent on nothing, and a dark floor competes with the
+     tree. The plot should recede as a plaza, not read as a second pattern
+     fighting the canopy.
+
+     Soil and grass also sit close to each other in weight. Two ground tones of
+     clearly different lightness make the floor read as a busy checkerboard;
+     near-equal luminance lets it read as one surface with variation in it. */
+  var SOIL = '#8d826e';        // warm stone, 3.15:1
+  var GRASS = '#698d57';       // 3.15:1
   var SLAB_SIDE = '#6E6152';  // never seen from overhead
 
   /* Six foliage swatches, each sitting just above MIN_RATIO rather than well
@@ -944,8 +948,13 @@ footer { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
 
        Together with the two side tones this is the five-tone ladder:
          top 0   right -16%   fallen -24%   left -32%   fallen2 -34%  */
-    pal.mat.fallen = sides(darken(pal.foliageTop, 0.24), 0.16, 0.32);
-    pal.mat.fallen2 = sides(darken(pal.foliageTop, 0.34), 0.16, 0.32);
+    /* Kept close to the foliage rather than well below it. The point of the
+       carpet is that a crown module reads SOLID from overhead - leaf cube
+       where there is a leaf, fallen petal where there is not, in one colour.
+       Pushing the carpet far darker reintroduced it as a third weight on the
+       floor competing with the tree. */
+    pal.mat.fallen = sides(darken(pal.foliageTop, 0.08), 0.16, 0.32);
+    pal.mat.fallen2 = sides(darken(pal.foliageTop, 0.16), 0.16, 0.32);
     pal.foliageSide = pal.mat.leaf.sideA;
     pal.grassSide = pal.mat.grass.sideA;
     pal.soilSide = darken(pal.soil, 0.10);
@@ -1106,8 +1115,11 @@ footer { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
 
      The lower shell is thinner than the upper one because less of the
      underside is ever seen. Both scale with span, so the fill still tracks
-     crown FOOTPRINT rather than volume and the 45,000-leaf case stays gone. */
-  var SHELL_LOWER = 0.6;
+     crown FOOTPRINT rather than volume and the 45,000-leaf case stays gone.
+
+     This ratio is also the cheapest lever on voxel count: you see far less of
+     the underside than the top, so thinning it costs little visually. */
+  var SHELL_LOWER = 0.45;
 
   var SPECIES = [
     { id: 'sakura', season: 'Spring', name: 'Sakura', fall: 'petals' },
@@ -1343,8 +1355,13 @@ footer { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
         if (this.claimed[my][mx]) {
           mat = nz > 0.5 ? pal.mat.fallen : pal.mat.fallen2;
         } else {
-          // brown soil where the crown does not reach, grass elsewhere
-          isGrass = nz > 0.45;
+          /* Grass gathers at the rim, stone fills the middle - the reference
+             is a stone plaza with planting round its edge, not a lawn. Biasing
+             on radius rather than sprinkling grass uniformly is most of what
+             stops the floor reading as noise. */
+          var rx = (mx + 0.5) / n - 0.5, ry = (my + 0.5) / n - 0.5;
+          var rad = Math.sqrt(rx * rx + ry * ry) / 0.7071;    // 0 centre, 1 corner
+          isGrass = nz < (rad - 0.35) * 1.6;
           mat = isGrass ? pal.mat.grass : pal.mat.soil;
         }
         // Chunky enough to read as terrain. At 0.26 the blocks look like flat
@@ -1367,7 +1384,25 @@ footer { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
   };
 
   // --- species -----------------------------------------------------------
-  /* Proportions are tuned against a measured silhouette aspect (rendered
+  /* CROWN WIDTH. Three of the four species converged on the same correction -
+     radius x1.15, heights x0.85-0.95 - when swept against the reference. The
+     crowns were uniformly about 15% too narrow and slightly too tall, which is
+     why they read as tall lumps rather than canopies. Crown width over plot
+     width lands near 0.60, matching the reference.
+
+     The gum is deliberately excluded. Its best fit is x1.40, but the target is
+     borrowed: the reference only ever shows the cherry, and a eucalyptus
+     genuinely is sparse and open-crowned. Widening it to match would cost the
+     one thing that distinguishes its silhouette. Match the family, not the
+     cherry's exact numbers - the willow likewise sits broader than tall.
+
+     Only the RADIUS correction is applied. The accompanying height reduction
+     was derived against a taller baseline than this one; applied here it drove
+     the silhouette to 0.874-0.888, under the floor. Widening alone brings the
+     crown aspect down without touching the silhouette, which is the part that
+     was actually wrong.
+
+     Proportions are tuned against a measured silhouette aspect (rendered
      diorama height / plot width at t=0), not by eye. The target band is
      0.90-1.05; a crown that tops out around 0.9n lands there. Anything much
      flatter reads as a disc floating over a plaza, and - because a flat crown
@@ -1383,7 +1418,7 @@ footer { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
   function plantSakura(c, n, cx, cy) {
     var rnd = c.rnd;
     var trunkH = n * 0.26;
-    var R = n * 0.32;
+    var R = n * 0.368;                       // kR 1.15
     c.trunk(cx, cy, 0, trunkH, 0.62);
     c.cloud(cx + 0.5, cy + 0.5, trunkH + n * 0.32, R, n * 0.34);
     for (var i = 0; i < 4; i++) {
@@ -1400,7 +1435,7 @@ footer { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
   function plantOak(c, n, cx, cy) {
     var rnd = c.rnd;
     var trunkH = n * 0.28;
-    var R = n * 0.34;
+    var R = n * 0.391;                       // kR 1.15
     c.trunk(cx, cy, 0, trunkH, 0.82);
     c.trunk(cx + 1, cy, 0, trunkH * 0.7, 0.42);
     c.trunk(cx, cy + 1, 0, trunkH * 0.7, 0.42);
@@ -1456,7 +1491,7 @@ footer { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
   function plantWillow(c, n, cx, cy) {
     var rnd = c.rnd;
     var trunkH = n * 0.30;
-    var R = n * 0.36;
+    var R = n * 0.414;                       // kR 1.15
     var domeZ = trunkH + n * 0.40;
     c.trunk(cx, cy, 0, trunkH, 0.66);
     // flat-bottomed rather than a true dome: -0.75 keeps the underside high

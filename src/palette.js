@@ -97,14 +97,18 @@
   // Paving is the light module and also the canvas background, so the 4-module
   // quiet zone is the same colour as the light paving and reads as margin.
   var PAVING = '#EDEAE3';
-  /* Ground sits near 3.5:1, not the near-black 10:1 it is tempting to reach
-     for. The ground layer alone reproduces the matrix, so the instinct is to
-     make it as dark as possible - but the floor is 3:1, and every stop past it
-     is headroom spent on nothing. Dark ground also competes with the tree: the
-     plot should recede as a plaza, not read as a second pattern fighting the
-     canopy. */
-  var SOIL = '#90795c';
-  var GRASS = '#618648';
+  /* Ground sits just above the 3:1 floor, not the near-black 10:1 it is
+     tempting to reach for. The ground layer alone reproduces the matrix, so
+     the instinct is to make it as dark as possible - but every stop past the
+     floor is headroom spent on nothing, and a dark floor competes with the
+     tree. The plot should recede as a plaza, not read as a second pattern
+     fighting the canopy.
+
+     Soil and grass also sit close to each other in weight. Two ground tones of
+     clearly different lightness make the floor read as a busy checkerboard;
+     near-equal luminance lets it read as one surface with variation in it. */
+  var SOIL = '#8d826e';        // warm stone, 3.15:1
+  var GRASS = '#698d57';       // 3.15:1
   var SLAB_SIDE = '#6E6152';  // never seen from overhead
 
   /* Six foliage swatches, each sitting just above MIN_RATIO rather than well
@@ -196,8 +200,13 @@
 
        Together with the two side tones this is the five-tone ladder:
          top 0   right -16%   fallen -24%   left -32%   fallen2 -34%  */
-    pal.mat.fallen = sides(darken(pal.foliageTop, 0.24), 0.16, 0.32);
-    pal.mat.fallen2 = sides(darken(pal.foliageTop, 0.34), 0.16, 0.32);
+    /* Kept close to the foliage rather than well below it. The point of the
+       carpet is that a crown module reads SOLID from overhead - leaf cube
+       where there is a leaf, fallen petal where there is not, in one colour.
+       Pushing the carpet far darker reintroduced it as a third weight on the
+       floor competing with the tree. */
+    pal.mat.fallen = sides(darken(pal.foliageTop, 0.08), 0.16, 0.32);
+    pal.mat.fallen2 = sides(darken(pal.foliageTop, 0.16), 0.16, 0.32);
     pal.foliageSide = pal.mat.leaf.sideA;
     pal.grassSide = pal.mat.grass.sideA;
     pal.soilSide = darken(pal.soil, 0.10);
