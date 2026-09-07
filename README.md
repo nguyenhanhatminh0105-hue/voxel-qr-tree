@@ -8,14 +8,21 @@ Two builds, same behaviour, same test suite:
 
 | file | renderer | size | frame cost | dependencies |
 |---|---|---|---|---|
-| **`index.html`** | WebGL, three.js r180 vendored inline, InstancedMesh | 765 KB | 1.3 ms | none at runtime |
-| `canvas.html` | canvas 2D, painter's algorithm | 73 KB | 23 ms | none at all |
+| **`index.html`** | WebGL, three.js r180 vendored inline, InstancedMesh | 765 KB | 0.8 ms | none at runtime |
+| `canvas.html` | canvas 2D, painter's algorithm | 73 KB | 58 ms | none at all |
 
 Both are single files and both run from a `file://` URL with no network access.
-Open either directly in a browser. (Frame cost is the worst case over every
-species at 25x25 through 37x37 — 4,472 voxels — measured after a warm-up in a
-fresh page. The WebGL figure is software-rendered SwiftShader, so a real GPU is
-faster still.)
+Open either directly in a browser. (Median frame cost on the heaviest scene —
+5,226 voxels at 37x37 — after a warm-up in a fresh page. The WebGL figure is
+software-rendered SwiftShader, so a real GPU is faster still.)
+
+The canvas figure has a long tail: nine runs of the same scene gave 33, 58 and
+1480 ms at min, median and max. That is garbage collection, not fill rate.
+`collectFaces` allocates a fresh object and array per face — about 15,700 of
+each per frame at that scene — and the crowns are now large enough for it to
+matter. Thinning the lower shell (`SHELL_LOWER`) is the cheap lever, and is
+already at 0.45; the real fix is pooling those objects across frames. WebGL is
+unaffected because it writes into pre-allocated instance buffers.
 
 ![Four species](docs/trees.png)
 
@@ -241,6 +248,27 @@ speckled. It is denser for the same leaf budget and throws away none of the
 ~50% of samples that used to land on paving. Overlapping clouds merge their
 spans first, so stacked puffs do not double up.
 
+### Crown width
+
+Three of the four species converge on the same correction: **radius ×1.15**.
+The crowns were uniformly about 15% too narrow, which is why they read as tall
+lumps rather than canopies. Crown width over plot width now measures 0.593 in
+screen space against the reference's 0.586, and crown aspect fell from
+1.10–1.15 to 0.94–1.00.
+
+The accompanying height reduction from the same sweep is *not* applied — it was
+derived against a taller baseline than this one, and applying it here drove the
+silhouette to 0.874–0.888, under the floor. Widening alone brings crown aspect
+down without touching the silhouette, which is the part that was wrong.
+
+**The gum is deliberately excluded.** Its best fit is ×1.40, but the target is
+borrowed: the reference only ever shows the cherry, and a eucalyptus genuinely
+is sparse and open-crowned. Widening it to match would cost the one thing that
+distinguishes its silhouette. Its payload spread is 0.10–0.13 at every setting
+including ×1.00, so that is structural to scattered clumps, not something
+widening caused or fixes. Match the family, not the cherry's exact numbers —
+the willow likewise sits broader than tall.
+
 ### Shell fill, at both ends
 
 Filling whole spans makes leaf count scale with crown *volume*, so a version 13
@@ -328,9 +356,21 @@ saturation, solve lightness for the ratio.
 | Plum | `#ae64c0` | 3.25:1 | `#C79BE0` | **1.9:1** |
 | Moss | `#738947` | 3.24:1 | `#AFC46B` | **1.6:1** |
 
-Ground is lightened to match: soil `#90795c` at 3.44:1, grass `#618648` at
-3.49:1. A dark floor competes with the tree; the plot should recede as a plaza
-rather than read as a second pattern fighting the canopy.
+Ground sits just above the floor: stone `#8d826e` and grass `#698d57`, both at
+3.15:1. A dark floor competes with the tree.
+
+Three things make the floor recede rather than read as noise, and only the
+first is about lightness:
+
+- **The two ground tones sit at near-equal luminance.** Clearly different
+  lightnesses make a busy checkerboard; equal weight reads as one surface with
+  variation in it.
+- **Grass gathers at the rim**, biased on radius, with stone filling the
+  middle — a plaza with planting round its edge, not a lawn.
+- **The fallen carpet stays close to the foliage** (−8% and −16%, not −24% and
+  −34%). The carpet exists so a crown module reads *solid* from overhead;
+  pushing it far darker reintroduced it as a third weight competing with the
+  tree.
 
 ![Six swatches](docs/swatches.png)
 
