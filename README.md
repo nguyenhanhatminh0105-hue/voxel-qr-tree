@@ -92,8 +92,9 @@ ground layer alone reproduces the matrix, so the instinct is to make it as
 dark as possible — but the floor is 3:1 and every stop past it is headroom
 spent on nothing, at the cost of a floor that competes with the tree.
 
-**Every colour that can land on a dark module needs ≥3:1 contrast against the
-paving.** See below; this forces deeper tones than anyone would pick for looks.
+**A dark module's area-weighted MEAN needs ≥3:1 against the paving — not every
+individual face.** A scanner thresholds a module; it never sees a voxel. See
+below: getting this wrong is what made the canopy read as stacked bricks.
 
 **Tonal variation on dark-module surfaces only ever goes darker; variation on
 paving only ever goes lighter.** If the two families converge you get an
@@ -286,6 +287,60 @@ module cap on a 16.9 module span and floated 5.45 modules above the trunk top.
 The lower shell is thinner than the upper one because less of the underside is
 ever seen. Both scale with span, so the fill still tracks crown *footprint*
 rather than volume: 4,024–4,472 voxels at 37x37 instead of 21,046.
+
+## Why the canopy read as stacked bricks
+
+Not voxel shape, and not leaf size — those already vary 0.48–0.74 modules.
+**Tone count.** Every one of the ~2,000 leaf voxels carried the same top-face
+colour, so with three fixed face shades the whole crown was four flat values.
+Uniform tone across a lattice of cubes is exactly what reads as Minecraft. The
+reference has roughly 24 tone families to that 4.
+
+The palette was what prevented fixing it. Holding *every surface* at or above
+`MIN_RATIO` meant any lighter variant got darkened straight back to the floor,
+leaving nothing to dapple with. But that rule is stricter than scanning
+requires: what has to clear the floor is the module's area-weighted mean. The
+reference's own code view mixes tones at 2.07:1, 2.53:1 and 3.21:1 — two below
+a 3:1 floor — and still decodes.
+
+So there are now two rules:
+
+- **Sub-module surfaces** (leaves) use a five-tone ladder whose weighted *mean*
+  clears `MIN_RATIO`. Rungs may sit below it, but none may go lighter than
+  `TONE_FLOOR` (2.0:1), so a run of highlights inside one module cannot lift it.
+- **Whole-module surfaces** (grass, soil, bark) keep the per-surface floor
+  exactly as before. One block covers one module, so there is no averaging to
+  rely on.
+
+The rung is chosen by a hash of the **voxel** — position *and* height — not the
+column. Wind phase wants a column to move as one piece; dappling wants the
+opposite, neighbours differing. Measured rung distribution matches the weights
+within 2%.
+
+### The ladder is asymmetric, and the test is why
+
+The natural ladder is symmetric, ±0.26 around the base. That version's
+highlight rung crosses the grey level the matrix-reconstruction test samples
+at, on four of the six swatches — and the test duly caught it, **12 modules
+flipping light**. ZBar still read those codes, because real scanners threshold
+locally, which is precisely why the fixed-threshold reconstruction test is the
+stricter canary and worth keeping strict.
+
+The shipped ladder is capped at +0.13 on the light side and runs to −0.32 on
+the dark, with weights re-solved so the area-weighted mean is unchanged — it
+drifts by at most **0.009** across the six swatches. The module is exactly as
+dark as it was; it simply is not flat.
+
+| rung | offset | weight | ratio (rose) |
+|---|---|---|---|
+| highlight | +0.13 | 0.14 | 2.66:1 |
+| light | +0.065 | 0.24 | 2.94:1 |
+| base | 0 | 0.44 | 3.25:1 |
+| shade | −0.16 | 0.12 | 4.36:1 |
+| deep | −0.32 | 0.06 | 6.23:1 |
+| **weighted mean** | | | **3.25:1** |
+
+Rendered crown tone families rise from 4 to 64, luminance range 56–211.
 
 ## The fallen-blossom carpet
 

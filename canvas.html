@@ -780,7 +780,28 @@ footer { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
 })(typeof self !== 'undefined' ? self : this, function () {
   'use strict';
 
-  var MIN_RATIO = 3.0;          // contrast floor for anything over a dark module
+  var MIN_RATIO = 3.0;          // contrast floor for a dark module's mean
+  var TONE_FLOOR = 2.0;         // no single tone may be lighter than this
+
+  /* WHAT ACTUALLY HAS TO CLEAR THE FLOOR is a module's area-weighted mean, not
+     every individual face. A scanner thresholds a module; it never sees a
+     voxel. Holding each surface at or above MIN_RATIO is stricter than
+     scanning requires, and it is what collapsed the canopy to a single tone:
+     any lighter variant got darkened straight back to the floor, leaving
+     nothing to dapple with. Uniform tone across a lattice of cubes is exactly
+     what reads as stacked bricks.
+
+     So there are two rules, not one:
+
+       SUB-MODULE surfaces (leaves) may use a tone ladder whose weighted MEAN
+       clears MIN_RATIO. Individual rungs may sit below it - the reference's
+       own code view mixes tones at 2.07:1, 2.53:1 and 3.21:1 and still
+       decodes - but none may go lighter than TONE_FLOOR, so a run of
+       highlights inside one module cannot lift it over.
+
+       WHOLE-MODULE surfaces (grass, soil, bark) keep the per-surface floor
+       exactly as before. One block covers one module, so there is no
+       averaging to rely on and every tone must clear MIN_RATIO by itself. */
 
   // --- colour maths ------------------------------------------------------
   function parseHex(hex) {
@@ -885,6 +906,32 @@ footer { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
     { id: 'moss', name: 'Moss', wanted: '#AFC46B', hex: '#738947' }
   ];
 
+  /* Leaf tone ladder: offsets from the base (positive lightens) and the share
+     of voxels each takes. Sub-module, so the weighted mean is what matters. */
+  /* The ladder is asymmetric: capped at +0.13 on the light side, running to
+     -0.32 on the dark. A symmetric +/-0.26 ladder looks better in isolation
+     but its highlight rung crosses the threshold the matrix-reconstruction
+     test samples at, on four of the six swatches - and that test duly caught
+     it, 12 modules flipping light. ZBar still read those codes, because real
+     scanners threshold locally; the fixed-threshold test is the stricter
+     canary and is worth keeping strict.
+
+     Weights were then solved so the area-weighted mean is unchanged despite
+     the asymmetry - it drifts by at most 0.009 across the six swatches. */
+  var LEAF_LADDER = [
+    { d: 0.13, w: 0.14 },   // highlight
+    { d: 0.065, w: 0.24 },  // light
+    { d: 0.00, w: 0.44 },   // base
+    { d: -0.16, w: 0.12 },  // shade
+    { d: -0.32, w: 0.06 }   // deep
+  ];
+  // Narrower, and every rung must clear the floor on its own.
+  var GROUND_LADDER = [
+    { d: 0.05, w: 0.28 },
+    { d: 0.00, w: 0.40 },
+    { d: -0.10, w: 0.32 }
+  ];
+
   // Per-species surfaces that are not the swatch colour.
   var SPECIES_COLOURS = {
     sakura: { barkTop: '#4A3328', barkSide: '#7A5A46' },
@@ -940,6 +987,26 @@ footer { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
       bark: { top: pal.barkTop, sideA: pal.barkSide, sideB: darken(pal.barkSide, 0.16) }
     };
 
+    /* Tone ladders. Every leaf carrying one colour is what makes a crown read
+       as a grid of identical bricks rather than a mass of foliage; the
+       reference has roughly 24 tone families against our 4. Weights are chosen
+       so the area-weighted mean luminance is unchanged - the module is exactly
+       as dark as it was, it simply is not flat. */
+    pal.mat.leaf.ladder = LEAF_LADDER.map(function (r) {
+      var hex = r.d > 0 ? lighten(pal.foliageTop, r.d) : darken(pal.foliageTop, -r.d);
+      return { top: hex, sideA: darken(hex, 0.16), sideB: darken(hex, 0.32), w: r.w };
+    });
+    /* Ground blocks cover a whole module each, so their rungs stay above the
+       per-surface floor and the spread is deliberately narrow. */
+    ['grass', 'soil'].forEach(function (k) {
+      var baseHex = k === 'grass' ? pal.grassTop : pal.soil;
+      pal.mat[k].ladder = GROUND_LADDER.map(function (r) {
+        var hex = r.d > 0 ? lighten(baseHex, r.d) : darken(baseHex, -r.d);
+        hex = enforceContrast(hex, PAVING).hex;      // whole-module: hard floor
+        return { top: hex, sideA: darken(hex, 0.16), sideB: darken(hex, 0.32), w: r.w };
+      });
+    });
+
     /* Fallen blossom. Ground under the crown is carpeted with these rather
        than left as bare soil: leaf cubes are smaller than their module, so
        from overhead the gaps would show brown and the crown would read as
@@ -964,6 +1031,16 @@ footer { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
 
   // Report every top-face colour against the floor. Used by the test harness
   // and by the in-page contrast readout.
+  // Area-weighted mean contrast of a ladder against the paving.
+  function ladderMeanRatio(rungs) {
+    var L = 0, W = 0;
+    for (var i = 0; i < rungs.length; i++) {
+      L += luminance(rungs[i].top) * rungs[i].w;
+      W += rungs[i].w;
+    }
+    return (luminance(PAVING) + 0.05) / (L / W + 0.05);
+  }
+
   function audit() {
     var rows = [];
     function add(label, hex, exempt) {
@@ -987,11 +1064,41 @@ footer { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
       add(k + ' bark top', SPECIES_COLOURS[k].barkTop);
       add(k + ' bark side (side face, exempt)', SPECIES_COLOURS[k].barkSide, true);
     });
+    /* Ladder checks. Leaves are judged on their weighted mean, with a
+       per-tone backstop; ground ladders are judged per rung. */
+    SWATCHES.forEach(function (sw) {
+      var pal = build('sakura', sw.id);
+      var mean = ladderMeanRatio(pal.mat.leaf.ladder);
+      var lightest = Math.min.apply(null, pal.mat.leaf.ladder.map(function (r) {
+        return contrast(r.top, PAVING);
+      }));
+      rows.push({
+        label: 'leaf ladder ' + sw.name + ' (weighted mean of 5 tones)',
+        hex: pal.mat.leaf.top, ratio: mean, pass: mean >= MIN_RATIO, ladder: true
+      });
+      rows.push({
+        label: 'leaf ladder ' + sw.name + ' lightest tone (backstop ' + TONE_FLOOR + ':1)',
+        hex: pal.mat.leaf.ladder[0].top, ratio: lightest,
+        pass: lightest >= TONE_FLOOR, ladder: true
+      });
+    });
+    var gp = build('sakura', 'rose');
+    ['grass', 'soil'].forEach(function (k) {
+      gp.mat[k].ladder.forEach(function (r, i) {
+        rows.push({
+          label: k + ' ladder rung ' + i + ' (whole module: hard floor)',
+          hex: r.top, ratio: contrast(r.top, PAVING),
+          pass: contrast(r.top, PAVING) >= MIN_RATIO
+        });
+      });
+    });
     return rows;
   }
 
   return {
     MIN_RATIO: MIN_RATIO,
+    TONE_FLOOR: TONE_FLOOR,
+    ladderMeanRatio: ladderMeanRatio,
     PAVING: PAVING,
     SOIL: SOIL,
     SWATCHES: SWATCHES,
@@ -1081,6 +1188,26 @@ footer { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
     return (h / 4294967296) * Math.PI * 2;
   }
 
+  /* Tone hash for dappling. Deliberately hashed on the VOXEL - position and
+     height - not the column. Wind phase wants a whole column to move together;
+     dappling wants the opposite, neighbours differing, so a crown reads as a
+     mass of foliage rather than a grid of identical bricks. Pure position, so
+     it never consumes the random stream and stays stable across rebuilds. */
+  function toneHash(x, y, z) {
+    var h = ((x * 2654435761) ^ (y * 40503) ^ (z * 3266489917)) >>> 0;
+    h = Math.imul(h ^ (h >>> 15), 2246822519) >>> 0;
+    return (h >>> 8) / 16777216;
+  }
+
+  function pickRung(ladder, r) {
+    var acc = 0;
+    for (var i = 0; i < ladder.length; i++) {
+      acc += ladder[i].w;
+      if (r < acc) return ladder[i];
+    }
+    return ladder[ladder.length - 1];
+  }
+
   // Stable per-module noise, for picking between tones without consuming the
   // random sequence (so tone choice does not shift when density changes).
   function cellNoise(x, y) {
@@ -1140,10 +1267,15 @@ footer { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
     var slack = 1 - size;
     var ox = slack > 0 ? rnd() * slack : 0;
     var oy = slack > 0 ? rnd() * slack : 0;
+    // Dapple: pick a rung of the material's tone ladder from the voxel's own
+    // position, so adjacent voxels differ. See toneHash.
+    var tone = mat.ladder
+      ? pickRung(mat.ladder, toneHash(mx, my, Math.round(z * 16)))
+      : mat;
     out.push({
       x: mx + ox, y: my + oy, z: z,
       w: size, d: size, h: height,
-      top: mat.top, side: mat.sideA, sideA: mat.sideA, sideB: mat.sideB,
+      top: tone.top, side: tone.sideA, sideA: tone.sideA, sideB: tone.sideB,
       kind: kind,
       phase: phaseAt(mx, my)
     });

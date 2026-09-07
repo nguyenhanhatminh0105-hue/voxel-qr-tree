@@ -71,6 +71,26 @@
     return (h / 4294967296) * Math.PI * 2;
   }
 
+  /* Tone hash for dappling. Deliberately hashed on the VOXEL - position and
+     height - not the column. Wind phase wants a whole column to move together;
+     dappling wants the opposite, neighbours differing, so a crown reads as a
+     mass of foliage rather than a grid of identical bricks. Pure position, so
+     it never consumes the random stream and stays stable across rebuilds. */
+  function toneHash(x, y, z) {
+    var h = ((x * 2654435761) ^ (y * 40503) ^ (z * 3266489917)) >>> 0;
+    h = Math.imul(h ^ (h >>> 15), 2246822519) >>> 0;
+    return (h >>> 8) / 16777216;
+  }
+
+  function pickRung(ladder, r) {
+    var acc = 0;
+    for (var i = 0; i < ladder.length; i++) {
+      acc += ladder[i].w;
+      if (r < acc) return ladder[i];
+    }
+    return ladder[ladder.length - 1];
+  }
+
   // Stable per-module noise, for picking between tones without consuming the
   // random sequence (so tone choice does not shift when density changes).
   function cellNoise(x, y) {
@@ -130,10 +150,15 @@
     var slack = 1 - size;
     var ox = slack > 0 ? rnd() * slack : 0;
     var oy = slack > 0 ? rnd() * slack : 0;
+    // Dapple: pick a rung of the material's tone ladder from the voxel's own
+    // position, so adjacent voxels differ. See toneHash.
+    var tone = mat.ladder
+      ? pickRung(mat.ladder, toneHash(mx, my, Math.round(z * 16)))
+      : mat;
     out.push({
       x: mx + ox, y: my + oy, z: z,
       w: size, d: size, h: height,
-      top: mat.top, side: mat.sideA, sideA: mat.sideA, sideB: mat.sideB,
+      top: tone.top, side: tone.sideA, sideA: tone.sideA, sideB: tone.sideB,
       kind: kind,
       phase: phaseAt(mx, my)
     });
