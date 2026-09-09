@@ -13,7 +13,7 @@
   var state = {
     text: DEFAULT_URL,
     species: 'sakura',
-    swatch: 'rose',
+    swatch: null,      // null = use the species' own foliage colour
     t: 0,                  // raw flip progress 0..1
     target: 0,
     scene: null,
@@ -269,8 +269,9 @@
                 zeroExtent: 0, outOfModule: 0, offDark: 0 };
       for (var i = 0; i < faces.length; i++) {
         var p = faces[i].pts;
-        if (p.length !== 8) { r.badVertexCount++; continue; }
-        for (var k = 0; k < 8; k++) if (!isFinite(p[k])) { r.nonFinite++; break; }
+        // shapes emit triangles, quads and ten-gons now, not only quads
+        if (p.length < 6 || p.length % 2) { r.badVertexCount++; continue; }
+        for (var k = 0; k < p.length; k++) if (!isFinite(p[k])) { r.nonFinite++; break; }
         if (!faces[i].col) r.badVertexCount++;
         var a = Math.abs(Render.shoelace(p));
         if (a < r.minArea) r.minArea = a;
@@ -280,7 +281,13 @@
       for (var j = 0; j < vox.length; j++) {
         var v = vox[j];
         if (!(v.w > 0) || !(v.d > 0) || !(v.h > 0)) r.zeroExtent++;
-        if (Math.floor(v.x) !== Math.floor(v.x + v.w - 1e-9) ||
+        /* Ground tiles span whole modules of one colour, so they are checked
+           for grid alignment instead of module containment - a merged region
+           legitimately covers several modules. */
+        if (v.shape === 'tile' || v.shape === 'plate') {
+          if (v.x !== Math.round(v.x) || v.y !== Math.round(v.y) ||
+              v.w !== Math.round(v.w) || v.d !== Math.round(v.d)) r.outOfModule++;
+        } else if (Math.floor(v.x) !== Math.floor(v.x + v.w - 1e-9) ||
             Math.floor(v.y) !== Math.floor(v.y + v.d - 1e-9)) r.outOfModule++;
         var my2 = Math.floor(v.y), mx2 = Math.floor(v.x);
         if (!m[my2] || !m[my2][mx2]) r.offDark++;

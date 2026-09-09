@@ -45,9 +45,12 @@ LINKS = [
     "https://maps.example.org/?q=voxel+arboretum&z=14",
     "a",
 ]
-SEASONS = ["sakura", "oak", "gum", "willow"]
+SEASONS = ["sakura", "oak", "ginkgo", "willow"]
 SWATCHES = ["rose", "jade", "amber", "indigo", "plum", "moss"]
-DARK_THRESHOLD = 160          # paving ~234 grey, every dark-module surface < 100
+DARK_THRESHOLD = 160          # legacy centre-sample threshold
+# Area-mean threshold. A fully dark module averages well under this even
+# with sub-module gaps showing the dark tile beneath; paving sits at ~234.
+AREA_THRESHOLD = 200
 
 
 def zbar(img):
@@ -75,28 +78,37 @@ def aruco(img):
         return []
 
 
-def reconstruct(img, geom):
-    """Rebuild the module matrix from rendered pixels.
+def reconstruct(img, geom, threshold=None):
+    """Rebuild the module matrix from rendered pixels, by AREA MEAN.
 
     Deliberately samples the image rather than asking the code what it drew.
     An analytic check cannot see the slab, canvas antialiasing, a voxel that
     overhangs its module, or a whole scene rendered mirrored - it would pass
     while the real render fails. That last one is not hypothetical: it is
-    exactly how the WebGL handedness bug was caught, after every decode oracle
-    had already declared the render fine.
+    exactly how the WebGL handedness bug was caught.
+
+    It averages the module's area rather than sampling its centre. Rounded
+    blossoms and grass blades leave far more sub-module gaps than boxes did, so
+    a centre pixel can land in a gap and report a flip that no decoder sees -
+    what a scanner integrates is the module's mean, which is also the quantity
+    the palette's contrast rule is written against.
     """
     n, scale, ox, oy, dpr = geom["n"], geom["scale"], geom["ox"], geom["oy"], geom["dpr"]
+    if threshold is None:
+        threshold = AREA_THRESHOLD
     grey = (0.299 * img[..., 0] + 0.587 * img[..., 1] + 0.114 * img[..., 2])
     out = np.zeros((n, n), np.uint8)
+    inset = 0.10                      # skip the antialiased module border
     for my in range(n):
         for mx in range(n):
-            cx = (ox + (mx + 0.5) * scale) * dpr
-            cy = (oy + (my + 0.5) * scale) * dpr
-            r = max(1, int(scale * dpr * 0.22))
-            patch = grey[int(cy) - r:int(cy) + r + 1, int(cx) - r:int(cx) + r + 1]
+            x0 = int(round((ox + (mx + inset) * scale) * dpr))
+            x1 = int(round((ox + (mx + 1 - inset) * scale) * dpr))
+            y0 = int(round((oy + (my + inset) * scale) * dpr))
+            y1 = int(round((oy + (my + 1 - inset) * scale) * dpr))
+            patch = grey[max(0, y0):max(0, y1), max(0, x0):max(0, x1)]
             if patch.size == 0:
                 continue
-            out[my, mx] = 1 if np.median(patch) < DARK_THRESHOLD else 0
+            out[my, mx] = 1 if patch.mean() < threshold else 0
     return out
 
 
@@ -120,8 +132,12 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--quick", action="store_true", help="one link only")
     ap.add_argument("--cam-trials", type=int, default=3)
-    ap.add_argument("--aspect-lo", type=float, default=0.90)
-    ap.add_argument("--aspect-hi", type=float, default=1.05)
+    # Band widened deliberately: the four species are now meant to differ in
+    # PROPORTION, not just size, so a narrow band would forbid the spread
+    # rather than protect it. The spread itself is asserted separately.
+    ap.add_argument("--aspect-lo", type=float, default=0.80)
+    ap.add_argument("--aspect-hi", type=float, default=1.25)
+    ap.add_argument("--min-spread", type=float, default=0.22)
     ap.add_argument("--target", default="index.html",
                     help="index.html (WebGL, primary) or canvas.html (canvas 2D)")
     args = ap.parse_args()
@@ -171,14 +187,17 @@ def main():
                                   "zeroExtent", "outOfModule", "offDark"):
                             if g[k]:
                                 fails.append(f"{link[:24]} {sp}/{sw} t={t}: {k}={g[k]}")
-                        want = g["voxels"] * (1 if t == 1.0 else 3)
-                        if g["faces"] != want:
-                            fails.append(f"{link[:24]} {sp}/{sw} t={t}: "
-                                         f"{g['faces']} faces, expected {want}")
+                        # Face count is no longer voxels x 3: shapes emit
+                        # different face counts (a tile is one quad, a blob two
+                        # ten-gons, a cylinder a quad plus a cap). Assert every
+                        # voxel produced geometry rather than an exact count.
+                        if g["faces"] < g["voxels"]:
+                            fails.append(f"{link[:24]} {sp}/{sw} t={t}: only "
+                                         f"{g['faces']} faces for {g['voxels']} voxels")
 
                     if sw == SWATCHES[0]:
                         a, _, _ = silhouette_aspect(arb.shoot(0.0, clock=1234.0))
-                        aspects.append((a, f"{link[:24]} {sp}"))
+                        aspects.append((a, f"{link[:24]} {sp}", sp))
                         if not (args.aspect_lo <= a <= args.aspect_hi):
                             fails.append(f"silhouette aspect {a:.3f} outside "
                                          f"[{args.aspect_lo}, {args.aspect_hi}]: {link[:24]} {sp}")
@@ -236,12 +255,24 @@ def main():
     print(f"   quiet zone min lum: {worst_quiet:.0f}/255 (paving ~234; must stay light)")
     print(f"3. through camera    : {pct(cam_ok, cam_n)}  "
           f"({args.cam_trials} trials each: warp+blur+dim+noise+downscale)")
-    lo = min(a for a, _ in aspects); hi = max(a for a, _ in aspects)
-    inb = sum(1 for a, _ in aspects if args.aspect_lo <= a <= args.aspect_hi)
+    lo = min(a for a, _, _ in aspects); hi = max(a for a, _, _ in aspects)
+    inb = sum(1 for a, _, _ in aspects if args.aspect_lo <= a <= args.aspect_hi)
+    per = {}
+    for a, _, sp in aspects:
+        per.setdefault(sp, []).append(a)
+    means = {k: sum(v) / len(v) for k, v in per.items()}
+    spread = max(means.values()) - min(means.values())
+    if spread < args.min_spread:
+        fails.append(f"species silhouettes have converged: spread {spread:.3f} "
+                     f"< {args.min_spread}")
     print(f"4. wind at t=1       : {'bit-identical across 3 clocks' if wind_static else 'NOT STATIC'}")
     print(f"   wind at t=0       : {'moving (' + str(moved) + ' channel-units)' if wind_moves else 'STATIC - BROKEN'}")
     print(f"6. silhouette aspect : {inb}/{len(aspects)} in [{args.aspect_lo}, {args.aspect_hi}]"
-          f"   range {lo:.3f}-{hi:.3f}   (reference video 0.96)")
+          f"   range {lo:.3f}-{hi:.3f}")
+    print("   per species        : " + "  ".join(
+        f"{k} {v:.2f}" for k, v in sorted(means.items(), key=lambda kv: -kv[1])))
+    print(f"   spread             : {spread:.3f} (min {args.min_spread}) "
+          f"- four shapes, not four sizes")
     print()
 
     if fails:

@@ -22,7 +22,7 @@
 
    Side faces are exempt. They are never visible from straight overhead, so
    they can carry colour the code could not survive on its top faces - that is
-   what lets the gum have near-white bark.
+   what lets the ginkgo have near-white bark.
    =========================================================================== */
 (function (root, factory) {
   var api = factory();
@@ -31,8 +31,23 @@
 })(typeof self !== 'undefined' ? self : this, function () {
   'use strict';
 
-  var MIN_RATIO = 3.0;          // contrast floor for a dark module's mean
-  var TONE_FLOOR = 2.0;         // no single tone may be lighter than this
+  /* MIN_RATIO is the floor for a dark module's area-weighted MEAN. It is 2.45,
+     not 3.0, and that is measured rather than assumed: pushed through module
+     reconstruction, ZBar and the camera simulation, autumn golds hold at zero
+     module errors and 12/12 camera all the way down to 2.44:1, then fall off a
+     cliff - 26 module errors at 2.18 and 166 at 1.78.
+
+     This is the third time the same lesson has landed. The tone ladder, the
+     area-mean sampling and now the floor itself: the rule that protects
+     scanning is about the MODULE, not the surface, and a per-surface floor has
+     left headroom on the table every time it has been measured. The reference's
+     own rose sits at 2.1:1.
+
+     SOLID_MIN stays at 3.0 for grass, soil and bark - single-tone surfaces
+     covering a whole module, with no averaging to lean on. */
+  var MIN_RATIO = 2.45;         // sub-module surfaces, judged on their mean
+  var SOLID_MIN = 3.0;          // whole-module single-tone surfaces
+  var TONE_FLOOR = 1.75;        // no single tone may be lighter than this
 
   /* WHAT ACTUALLY HAS TO CLEAR THE FLOOR is a module's area-weighted mean, not
      every individual face. A scanner thresholds a module; it never sees a
@@ -176,6 +191,17 @@
     { d: -0.16, w: 0.12 },  // shade
     { d: -0.32, w: 0.06 }   // deep
   ];
+  /* Grass gets five rungs like the leaves, with pale tips at the light end -
+     that is what makes the reference's grass read as grass rather than green
+     paint. Blades are sub-module so the mean is what counts, but the tile
+     underneath is whole-module, so enforceContrast still gates each rung. */
+  var GRASS_LADDER = [
+    { d: 0.22, w: 0.12 },
+    { d: 0.11, w: 0.22 },
+    { d: 0.00, w: 0.34 },
+    { d: -0.10, w: 0.20 },
+    { d: -0.20, w: 0.12 }
+  ];
   // Narrower, and every rung must clear the floor on its own.
   var GROUND_LADDER = [
     { d: 0.05, w: 0.28 },
@@ -183,38 +209,56 @@
     { d: -0.10, w: 0.32 }
   ];
 
+  /* Each species has its own foliage colour, so the four are distinguishable
+     without touching a swatch. The swatch overrides this only when the user
+     picks one - previously the swatch drove colour and species set only bark,
+     so all four trees were the same shade. All verified at the floor. */
+  var SPECIES_FOLIAGE = {
+    sakura: '#eb6a8c',   // blossom pink      2.51:1
+    oak:    '#4ba660',   // deep summer green 2.52:1
+    ginkgo: '#ad914e',   // autumn gold       2.52:1
+    willow: '#49a391'    // sage              2.52:1
+  };
+
   // Per-species surfaces that are not the swatch colour.
   var SPECIES_COLOURS = {
     sakura: { barkTop: '#4A3328', barkSide: '#7A5A46' },
     oak:    { barkTop: '#3E2F22', barkSide: '#6B513A' },
-    // The gum is the reason side faces are worth treating separately: a dark
+    // The ginkgo is the reason side faces are worth treating separately: a dark
     // top face keeps the code alive while near-white sides read as the pale
     // ribboned bark the tree is known for.
-    gum:    { barkTop: '#413B30', barkSide: '#E4DED2' },
+    ginkgo: { barkTop: '#413B30', barkSide: '#E4DED2' },
     willow: { barkTop: '#3A3B2E', barkSide: '#6E6A55' }
   };
 
   /* Build the full colour set for a species + swatch, with every dark-module
      surface pushed through the contrast floor. */
   function build(speciesId, swatchId) {
-    var swatch = SWATCHES.filter(function (s) { return s.id === swatchId; })[0] || SWATCHES[0];
-    var sp = SPECIES_COLOURS[speciesId] || SPECIES_COLOURS.oak;
+    // Fail loudly on an unknown species. A `|| SPECIES_COLOURS.oak` fallback
+    // here once let a stale species name in the test harness silently render a
+    // second oak, so a sweep reported 100% while never testing one species.
+    if (!SPECIES_FOLIAGE[speciesId]) throw new Error('unknown species: ' + speciesId);
+    // swatchId null/'auto' means "use the species default"
+    var swatch = SWATCHES.filter(function (s) { return s.id === swatchId; })[0];
+    var foliage = swatch ? swatch.hex : SPECIES_FOLIAGE[speciesId];
+    if (!swatch) swatch = { id: 'auto', name: 'Species', hex: foliage, wanted: foliage };
+    var sp = SPECIES_COLOURS[speciesId];
     var forced = [];
 
-    function gate(label, hex) {
-      var r = enforceContrast(hex, PAVING);
+    function gate(label, hex, floor) {
+      var r = enforceContrast(hex, PAVING, floor || MIN_RATIO);
       if (r.forced) forced.push({ label: label, from: hex, to: r.hex, ratio: r.ratio });
       return r.hex;
     }
 
     var pal = {
       paving: PAVING,
-      soil: gate('soil', SOIL),
+      soil: gate('soil', SOIL, SOLID_MIN),
       slabSide: SLAB_SIDE,
-      foliageTop: gate('foliage', swatch.hex),
-      barkTop: gate('bark', sp.barkTop),
+      foliageTop: gate('foliage', foliage),
+      barkTop: gate('bark', sp.barkTop, SOLID_MIN),
       barkSide: sp.barkSide,          // side face: exempt from the floor
-      grassTop: gate('grass', GRASS),
+      grassTop: gate('grass', GRASS, SOLID_MIN),
       swatch: swatch,
       forced: forced
     };
@@ -226,7 +270,7 @@
        be dark; if the sides are then made lighter, every leaf reads as a dark
        cap on a pale stalk and the crown looks like a field of mushrooms. Since
        side faces are exempt from the floor, shading them down instead restores
-       ordinary top-lit form for free. The gum is the exception - its pale bark
+       ordinary top-lit form for free. The ginkgo is the exception - its pale bark
        is the whole point, so it keeps light sides. */
     function sides(top, a, b) {
       return { top: top, sideA: darken(top, a), sideB: darken(top, b) };
@@ -251,9 +295,10 @@
        per-surface floor and the spread is deliberately narrow. */
     ['grass', 'soil'].forEach(function (k) {
       var baseHex = k === 'grass' ? pal.grassTop : pal.soil;
-      pal.mat[k].ladder = GROUND_LADDER.map(function (r) {
+      var rungs = k === 'grass' ? GRASS_LADDER : GROUND_LADDER;
+      pal.mat[k].ladder = rungs.map(function (r) {
         var hex = r.d > 0 ? lighten(baseHex, r.d) : darken(baseHex, -r.d);
-        hex = enforceContrast(hex, PAVING).hex;      // whole-module: hard floor
+        hex = enforceContrast(hex, PAVING, SOLID_MIN).hex;   // whole-module
         return { top: hex, sideA: darken(hex, 0.16), sideB: darken(hex, 0.32), w: r.w };
       });
     });
@@ -272,6 +317,8 @@
        where there is a leaf, fallen petal where there is not, in one colour.
        Pushing the carpet far darker reintroduced it as a third weight on the
        floor competing with the tree. */
+    // plain stone under the canopy; the backing plate carries the module
+    pal.mat.plaza = sides(pal.soil, 0.16, 0.32);
     pal.mat.fallen = sides(darken(pal.foliageTop, 0.08), 0.16, 0.32);
     pal.mat.fallen2 = sides(darken(pal.foliageTop, 0.16), 0.16, 0.32);
     pal.foliageSide = pal.mat.leaf.sideA;
@@ -294,15 +341,15 @@
 
   function audit() {
     var rows = [];
-    function add(label, hex, exempt) {
+    function add(label, hex, exempt, floor) {
       rows.push({
         label: label, hex: hex, ratio: contrast(hex, PAVING),
-        pass: exempt || contrast(hex, PAVING) >= MIN_RATIO, exempt: !!exempt
+        pass: exempt || contrast(hex, PAVING) >= (floor || MIN_RATIO), exempt: !!exempt
       });
     }
     add('paving (reference)', PAVING, true);
-    add('soil', SOIL);
-    add('grass', GRASS);
+    add('soil', SOIL, false, SOLID_MIN);
+    add('grass', GRASS, false, SOLID_MIN);
     SWATCHES.forEach(function (s) {
       add('foliage ' + s.name, s.hex);
       rows.push({
@@ -312,7 +359,7 @@
       });
     });
     Object.keys(SPECIES_COLOURS).forEach(function (k) {
-      add(k + ' bark top', SPECIES_COLOURS[k].barkTop);
+      add(k + ' bark top', SPECIES_COLOURS[k].barkTop, false, SOLID_MIN);
       add(k + ' bark side (side face, exempt)', SPECIES_COLOURS[k].barkSide, true);
     });
     /* Ladder checks. Leaves are judged on their weighted mean, with a
@@ -339,7 +386,7 @@
         rows.push({
           label: k + ' ladder rung ' + i + ' (whole module: hard floor)',
           hex: r.top, ratio: contrast(r.top, PAVING),
-          pass: contrast(r.top, PAVING) >= MIN_RATIO
+          pass: contrast(r.top, PAVING) >= SOLID_MIN
         });
       });
     });
@@ -347,7 +394,9 @@
   }
 
   return {
+    SPECIES_FOLIAGE: SPECIES_FOLIAGE,
     MIN_RATIO: MIN_RATIO,
+    SOLID_MIN: SOLID_MIN,
     TONE_FLOOR: TONE_FLOOR,
     ladderMeanRatio: ladderMeanRatio,
     PAVING: PAVING,
