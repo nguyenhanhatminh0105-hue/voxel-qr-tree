@@ -26,7 +26,7 @@ unaffected because it writes into pre-allocated instance buffers.
 
 ![Four species](docs/trees.png)
 
-Spring sakura, summer oak, autumn gum, winter willow. Tap the plot and each one
+Spring sakura, summer oak, autumn ginkgo, winter willow. Tap the plot and each one
 flattens into its own code:
 
 ![The same four, straight down](docs/codes.png)
@@ -37,7 +37,7 @@ The flip in motion — wind and petals at rest, decaying to exactly zero as the
 camera swings overhead. Also as video: [`docs/flip.mp4`](docs/flip.mp4)
 (one tree) and [`docs/seasons.mp4`](docs/seasons.mp4) (all four).
 
-A single tree at full size — `https://smaran.studio`, silhouette aspect 0.963:
+A single tree at full size — `https://smaran.studio`, silhouette aspect 1.021:
 
 ![Sakura](docs/sakura.png)
 
@@ -89,11 +89,11 @@ face to register as depth from the isometric view and changes nothing overhead.
 
 **Ground sits near 3.5:1, not the near-black 10:1 you first reach for.** The
 ground layer alone reproduces the matrix, so the instinct is to make it as
-dark as possible — but the floor is 3:1 and every stop past it is headroom
+dark as possible — but the floor is 2.45:1 and every stop past it is headroom
 spent on nothing, at the cost of a floor that competes with the tree.
 
-**A dark module's area-weighted MEAN needs ≥3:1 against the paving — not every
-individual face.** A scanner thresholds a module; it never sees a voxel. See
+**A dark module's area-weighted MEAN needs ≥2.45:1 against the paving — not
+every individual face.** A scanner thresholds a module; it never sees a voxel. See
 below: getting this wrong is what made the canopy read as stacked bricks.
 
 **Tonal variation on dark-module surfaces only ever goes darker; variation on
@@ -101,7 +101,7 @@ paving only ever goes lighter.** If the two families converge you get an
 unscannable code that looks fine on screen.
 
 **Side faces are never seen from overhead**, so they can carry colour the code
-could not survive on top. The gum's near-white bark is 1.11:1 against the
+could not survive on top. The ginkgo's near-white bark is 1.11:1 against the
 paving — unusable on a top face, fine on a side.
 
 **Wind decays to exactly zero in the code view.** Horizontal sway moves leaves
@@ -162,8 +162,8 @@ There are **no lights in the WebGL scene at all**. Materials are
 Ordinary 3-D lighting does the exact opposite of what this design needs. A
 light from above makes top faces the *brightest* — and the top face is the
 only one a scanner sees, so brightening it walks foliage back up through the
-3:1 floor and makes the code unscannable while still looking perfectly fine on
-screen. Here the top face carries the base tone and the two sides are baked
+contrast floor and makes the code unscannable while still looking perfectly
+fine on screen. Here the top face carries the base tone and the two sides are baked
 darker, so every surface is exactly the value the audit checked.
 
 For the same reason the contrast check samples the **framebuffer**, never
@@ -262,13 +262,35 @@ derived against a taller baseline than this one, and applying it here drove the
 silhouette to 0.874–0.888, under the floor. Widening alone brings crown aspect
 down without touching the silhouette, which is the part that was wrong.
 
-**The gum is deliberately excluded.** Its best fit is ×1.40, but the target is
-borrowed: the reference only ever shows the cherry, and a eucalyptus genuinely
-is sparse and open-crowned. Widening it to match would cost the one thing that
-distinguishes its silhouette. Its payload spread is 0.10–0.13 at every setting
-including ×1.00, so that is structural to scattered clumps, not something
-widening caused or fixes. Match the family, not the cherry's exact numbers —
-the willow likewise sits broader than tall.
+**The ginkgo is deliberately excluded**, because matching the cherry is not
+the goal for it. The reference only ever shows a cherry, and a ginkgo genuinely
+is narrow and upright; widening it to match would cost the one thing that
+distinguishes its silhouette. Match the family, not the cherry's exact numbers
+— the willow likewise sits broader than tall.
+
+That exclusion is easy to take too far, and was. Left alone, the ginkgo hit its
+1.15 silhouette target with a `0.95n` trunk carrying a small ball of foliage:
+**59% of the tree was bare pole, and the crown itself measured 0.91 — wider
+than tall.** Every assertion passed. The species reads as a lollipop, because
+the silhouette metric measures the whole diorama and cannot tell a narrow crown
+from a small crown held up high.
+
+It is now built the other way round: a `0.58n` bole, and clumps riding a
+vertical axis whose offset radius tapers as `1 − 0.62u²` toward the apex, so
+the crown closes to a point. Crown aspect 1.78, bare trunk 0.29 — in line with
+the willow's 0.34 rather than double it.
+
+Shortening the bole cost 0.10 of silhouette aspect, which dropped the
+four-species spread to 0.208 and failed the assertion below. The height had to
+come back, and *where* is the whole point: it went into `crownH`
+(`0.62n → 0.70n`, with clump count scaled to hold the axis spacing), not into
+the trunk. Bare trunk went **down**, 0.31 → 0.29, while the silhouette
+recovered. Relaxing `--min-spread` instead would have been the same mistake the
+assertion exists to catch.
+
+Two lessons, and they are the same lesson. A metric that passes is not a thing
+that works; and the reason this went unnoticed for so long is that the sweep
+was never rendering a ginkgo at all (below).
 
 ### Shell fill, at both ends
 
@@ -301,16 +323,18 @@ The palette was what prevented fixing it. Holding *every surface* at or above
 leaving nothing to dapple with. But that rule is stricter than scanning
 requires: what has to clear the floor is the module's area-weighted mean. The
 reference's own code view mixes tones at 2.07:1, 2.53:1 and 3.21:1 — two below
-a 3:1 floor — and still decodes.
+a 3:1 floor — and still decodes. That measurement is what the floor was
+eventually moved to 2.45:1 on.
 
 So there are now two rules:
 
 - **Sub-module surfaces** (leaves) use a five-tone ladder whose weighted *mean*
-  clears `MIN_RATIO`. Rungs may sit below it, but none may go lighter than
-  `TONE_FLOOR` (2.0:1), so a run of highlights inside one module cannot lift it.
-- **Whole-module surfaces** (grass, soil, bark) keep the per-surface floor
-  exactly as before. One block covers one module, so there is no averaging to
-  rely on.
+  clears `MIN_RATIO` (2.45:1). Rungs may sit below it, but none may go lighter
+  than `TONE_FLOOR` (1.75:1), so a run of highlights inside one module cannot
+  lift it.
+- **Whole-module surfaces** (grass, soil, bark) keep the per-surface floor,
+  `SOLID_MIN`, at 3.0:1. One block covers one module, so there is no averaging
+  to rely on and nothing to spend the relaxation on.
 
 The rung is chosen by a hash of the **voxel** — position *and* height — not the
 column. Wind phase wants a column to move as one piece; dappling wants the
@@ -373,12 +397,12 @@ however good the foliage is. All four species are dimensioned as fractions of
 `n`, the matrix size, so a version 2 code and a version 10 code grow trees of
 the same proportion. At 33x33:
 
-| species | voxels | of which canopy | height as % of plot width |
-|---|---|---|---|
-| sakura | 1,642 | 1,095 | 60% |
-| oak | 1,541 | 994 | 68% |
-| gum | 1,289 | 742 | 57% |
-| willow | 1,399 | 852 | 52% |
+| species | voxels | of which canopy | height as % of plot width | crown aspect | bare trunk |
+|---|---|---|---|---|---|
+| sakura | 4,629 | 3,824 | 117% | 1.11 | 0.19 |
+| oak | 6,873 | 6,250 | 121% | 0.88 | 0.23 |
+| ginkgo | 2,947 | 2,035 | 145% | 1.78 | 0.29 |
+| willow | 5,924 | 5,237 | 86% | 0.56 | 0.34 |
 
 The sakura is built to an explicit recipe: trunk `n*0.20`, main puff at
 `trunkH + n*0.19` with radius `n*0.30*0.98` and half-height `n*0.115`, four
@@ -387,8 +411,9 @@ That puts the crown top near `0.51 n`, plus sprigs above it.
 
 ## Where the contrast floor overrode taste
 
-Paving is `#EDEAE3` (luminance 0.824). At a 3:1 floor, anything that can land
-on a dark module must sit at luminance ≤ 0.241.
+Paving is `#EDEAE3` (luminance 0.824). A whole-module surface at the 3.0:1
+`SOLID_MIN` must sit at luminance ≤ 0.241; a sub-module surface judged on its
+mean at 2.45:1 gets as far as 0.307. That gap is the entire dappling budget.
 
 Two mistakes are easy here, and this project made both before making neither.
 
@@ -438,7 +463,7 @@ style choice and is not. With every top face forced dark, shading the side
 faces *lighter* — the obvious move — makes every leaf read as a dark cap on a
 pale stalk, and the crown looks like a field of mushrooms. Side faces are
 exempt from the floor, so they are shaded **darker** than the tops instead,
-which restores ordinary top-lit form for free. The gum keeps light sides,
+which restores ordinary top-lit form for free. The ginkgo keeps light sides,
 because its pale bark is the entire point of the species.
 
 That gives the five-tone ladder every dark-module surface is drawn from:
@@ -573,18 +598,35 @@ The checks are:
    checked for non-finite coordinates, zero-area faces, zero-extent voxels,
    voxels crossing a module edge, voxels on a light module, and missing faces.
 6. **Silhouette aspect.** Rendered diorama height ÷ plot width at `t=0`, which
-   must land in 0.90–1.05; the reference sits at 0.96. `stats.heightFraction`
-   is deliberately *not* used — it includes the fallen carpet, so it reads
-   healthy while the crown is a flat disc. There is a separate crown-only
-   `crownAspect` in `stats` for the same reason.
+   must land in 0.80–1.25. `stats.heightFraction` is deliberately *not* used —
+   it includes the fallen carpet, so it reads healthy while the crown is a flat
+   disc. There is a separate crown-only `crownAspect` in `stats` for the same
+   reason.
+
+   A band alone is not enough either: four species can all sit inside it and
+   still be four sizes of the same shape. So the check also asserts the
+   **spread** across species is at least 0.22 — ginkgo 1.12, oak 1.00, sakura
+   0.97, willow 0.86 on the canvas build (spread 0.256), and ginkgo 1.17, oak
+   1.05, sakura 1.02, willow 0.91 on WebGL (0.258).
 
    Tuning this against a handful of links is not enough. The matrix decides
    which columns near the crown apex survive carving, so the measurement varies
-   by payload — the gum spread 0.136 across links, most of the band, and the one
-   case that failed was a link absent from the tuning set. Where a species'
-   apex was set by randomly placed clumps, one clump is now anchored on the
-   trunk column, which is dark by construction; that pins the top and cut the
-   spread to 0.102.
+   by payload — the ginkgo spread 0.136 across links, most of the band, and the
+   one case that failed was a link absent from the tuning set. Where a species'
+   apex was set by randomly placed clumps, the apex is now pinned to the trunk
+   column, which is dark by construction; that cut the spread to 0.102.
+
+   **This assertion is what caught the sweep not testing a species at all.** It
+   failed at spread 0.144, which reads like a tuning miss. The cause was that
+   `test_render.py` still named `gum`, a species that no longer exists, and
+   `scene.js` had a `PLANTERS[species] || plantOak` fallback — so the sweep
+   rendered a second oak, reported 100% on 144 combinations, and never touched
+   the ginkgo. Only the per-species breakdown gave it away; the overall range
+   was a healthy 0.893–1.062.
+
+   Both silent fallbacks now throw, in `scene.js` and in `palette.js`. A
+   `|| default` on a lookup keyed by a name that appears in test fixtures is
+   not a safety net — it converts a broken test into a passing one.
 
 Recordings are driven through `renderAt(t, clock)` with a fixed clock step
 rather than screen captured, so they are deterministic and the wind animates at

@@ -9,7 +9,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from harness import Arboretum, save, ROOT
 
 URL = "https://github.com/nguyenhanhatminh0105-hue"
-SPECIES = ["sakura", "oak", "gum", "willow"]
+SPECIES = ["sakura", "oak", "ginkgo", "willow"]
 
 
 def sheet(images, cols, pad=14, bg=(237, 234, 227)):
@@ -29,7 +29,10 @@ def main():
     with Arboretum(width=520, height=520, dpr=2) as arb:
         trees, codes = [], []
         for sp in SPECIES:
-            info = arb.set_state(text=URL, species=sp, swatch="rose")
+            # "auto" = the species' own foliage colour. Passing None would not
+            # reset it: set_state drops None keys, so the previous swatch sticks
+            # and the sheet meant to show four species shows one colour four times.
+            info = arb.set_state(text=URL, species=sp, swatch="auto")
             print(f"{sp:7} v{info['version']} {info['size']}x{info['size']} "
                   f"{info['voxels']} voxels")
             trees.append(arb.shoot(0.0, clock=1200.0))

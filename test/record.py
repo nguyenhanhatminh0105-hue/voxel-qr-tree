@@ -61,7 +61,7 @@ def main():
     with Arboretum(width=args.size, height=args.size, dpr=1, target=args.target) as arb:
         if args.seasons:
             plan = [("sakura", "rose"), ("oak", "moss"),
-                    ("gum", "amber"), ("willow", "indigo")]
+                    ("ginkgo", "amber"), ("willow", "indigo")]
             seq = timeline(args.fps)
             for sp, sw in plan:
                 info = arb.set_state(text=args.url, species=sp, swatch=sw)

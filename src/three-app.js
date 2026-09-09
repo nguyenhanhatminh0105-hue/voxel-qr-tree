@@ -62,7 +62,8 @@
   var reduceMotion = window.matchMedia &&
     window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-  var state = { text: DEFAULT_URL, species: 'sakura', swatch: 'rose', t: 0, target: 0 };
+  // swatch null = use the species' own foliage colour
+  var state = { text: DEFAULT_URL, species: 'sakura', swatch: null, t: 0, target: 0 };
   var renderer, scene3, camera, petals;
   var meshes = [];            // [top, sideY, sideX] InstancedMesh
   var boxes = null;           // voxels plus the slab, in draw order
@@ -79,21 +80,63 @@
      underside are never front-facing. Each quad gets its own InstancedMesh so
      it can carry its own exact per-instance colour - instanceColor is one
      colour per instance, so three tones per box means three meshes. */
-  var FACE_QUADS = [
-    { key: 'top', tone: 'top', v: [[0, 0, 1], [1, 0, 1], [1, 1, 1], [0, 1, 1]] },
-    { key: 'sideY', tone: 'sideA', v: [[0, 0, 0], [1, 0, 0], [1, 0, 1], [0, 0, 1]] },
-    { key: 'sideX', tone: 'sideB', v: [[0, 0, 0], [0, 1, 0], [0, 1, 1], [0, 0, 1]] }
-  ];
+  /* SHAPES, not cubes. Nothing in the reference is a box, and no amount of
+     tone work fixes a cube - the silhouette is what reads as blocky. Each
+     shape is authored in local [0,1]^3 so the existing instance matrix (which
+     maps a unit cube onto a voxel, shear included) drives it unchanged.
 
-  function quadGeometry(v) {
-    var g = new THREE.BufferGeometry();
-    var pos = new Float32Array(12);
-    for (var i = 0; i < 4; i++) {
-      pos[i * 3] = v[i][0]; pos[i * 3 + 1] = v[i][1]; pos[i * 3 + 2] = v[i][2];
+     Shading is baked into vertex colours as a LINEAR MULTIPLIER, and there
+     are still no lights. Faces pointing straight up get factor 1.0, so a top
+     face keeps exactly the tone the palette audited - which is the only
+     surface the code depends on. Sides and undersides darken, which is what
+     gives a sphere form without a light source that would push top faces
+     brighter and through the contrast floor. */
+  function withShading(g, banded) {
+    g = g.toNonIndexed();
+    g.computeVertexNormals();
+    var pos = g.attributes.position, nrm = g.attributes.normal;
+    var col = new Float32Array(pos.count * 3);
+    for (var i = 0; i < pos.count; i++) {
+      var nx = nrm.getX(i), ny = nrm.getY(i), nz = nrm.getZ(i);
+      var f = 0.60 + 0.40 * Math.max(0, nz);          // top-lit
+      f *= 1 - 0.10 * Math.max(0, -ny) - 0.05 * Math.max(0, nx);
+      // horizontal bark banding, straight from the reference's trunk
+      if (banded) f *= 0.93 + 0.07 * Math.cos(pos.getZ(i) * Math.PI * 7);
+      col[i * 3] = col[i * 3 + 1] = col[i * 3 + 2] = f;
     }
-    g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-    g.setIndex([0, 1, 2, 0, 2, 3]);
+    g.setAttribute('color', new THREE.BufferAttribute(col, 3));
     return g;
+  }
+
+  function shapeGeometry(shape) {
+    var g;
+    if (shape === 'blob') {
+      // 20 faces: a soft rounded blossom, and barely dearer than a box
+      g = new THREE.IcosahedronGeometry(0.5, 0);
+      g.translate(0.5, 0.5, 0.5);
+      return withShading(g);
+    }
+    if (shape === 'cyl') {
+      g = new THREE.CylinderGeometry(0.44, 0.5, 1, 12, 4);
+      g.rotateX(Math.PI / 2);                          // axis Y -> Z
+      g.translate(0.5, 0.5, 0.5);
+      return withShading(g, true);
+    }
+    if (shape === 'blade') {
+      g = new THREE.CylinderGeometry(0.03, 0.5, 1, 4, 2);   // tapered spike
+      g.rotateX(Math.PI / 2);
+      g.translate(0.5, 0.5, 0.5);
+      return withShading(g);
+    }
+    if (shape === 'tile') {
+      // just the top surface: ground is flat, so nothing else is ever seen
+      g = new THREE.PlaneGeometry(1, 1);
+      g.translate(0.5, 0.5, 1);
+      return withShading(g);
+    }
+    g = new THREE.BoxGeometry(1, 1, 1);
+    g.translate(0.5, 0.5, 0.5);
+    return withShading(g);
   }
 
   // --- scene build ------------------------------------------------------
@@ -127,20 +170,28 @@
       sideA: pal.slabSide, sideB: Palette.darken(pal.slabSide, 0.14)
     }]);
 
+    // one InstancedMesh per shape, each with its own per-instance colour
+    var groups = {};
+    for (var bi = 0; bi < boxes.length; bi++) {
+      var sh = boxes[bi].shape || 'box';
+      (groups[sh] || (groups[sh] = [])).push(bi);
+    }
     var c = new THREE.Color();
-    FACE_QUADS.forEach(function (face) {
+    Object.keys(groups).sort().forEach(function (shape) {
+      var idx = groups[shape];
       var mesh = new THREE.InstancedMesh(
-        quadGeometry(face.v),
-        new THREE.MeshBasicMaterial({ side: THREE.DoubleSide }),   // no lights, ever
-        boxes.length
+        shapeGeometry(shape),
+        new THREE.MeshBasicMaterial({ side: THREE.DoubleSide, vertexColors: true }),
+        idx.length
       );
       mesh.frustumCulled = false;
-      for (var i = 0; i < boxes.length; i++) {
-        c.set(boxes[i][face.tone] || boxes[i].top);
+      for (var i = 0; i < idx.length; i++) {
+        c.set(boxes[idx[i]].top);
         mesh.setColorAt(i, c);
       }
       mesh.instanceColor.needsUpdate = true;
       mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      mesh.userData.idx = idx;
       meshes.push(mesh);
       scene3.add(mesh);
     });
@@ -193,31 +244,32 @@
   var _m = new THREE.Matrix4();
   function applyWind(time, amp) {
     if (!meshes.length) return;
-    var arrays = meshes.map(function (m) { return m.instanceMatrix.array; });
-    for (var b = 0; b < boxes.length; b++) {
-      var v = boxes[b];
-      var lo = 0, hi = 0;
-      if (amp !== 0) {
-        /* swayLo/swayHi are precomputed in scene.js as
-           stiffness x (z / maxZ)^1.4. Keeping the law there rather than
-           repeating pow(z, 1.4) here is what lets both renderers obey the same
-           wind: normalised by tree height so a big code does not sway harder,
-           and stiffened per kind so trunks barely move. The slab is appended
-           to `boxes` without them, hence the || 0. */
-        var s = Math.sin(time * WIND_FREQ + v.phase);
-        lo = amp * (v.swayLo || 0) * s;
-        hi = amp * (v.swayHi || 0) * s;
+    for (var mi = 0; mi < meshes.length; mi++) {
+      var mesh = meshes[mi], idx = mesh.userData.idx, arr = mesh.instanceMatrix.array;
+      for (var k = 0; k < idx.length; k++) {
+        var v = boxes[idx[k]];
+        var lo = 0, hi = 0;
+        if (amp !== 0) {
+          var sn = Math.sin(time * WIND_FREQ + v.phase);
+          lo = amp * (v.swayLo || 0) * sn;
+          hi = amp * (v.swayHi || 0) * sn;
+        }
+        /* The shear column displaces the top relative to the base. A grass
+           blade's static splay is exactly that, so it simply adds here rather
+           than needing a primitive of its own - and the blade then bends from
+           its root under wind instead of leaning as a rigid stick. */
+        var kx = (hi - lo) * WIND_DIR[0] + (v.leanX || 0);
+        var ky = (hi - lo) * WIND_DIR[1] + (v.leanY || 0);
+        _m.set(
+          v.w, 0, kx, v.x + lo * WIND_DIR[0],
+          0, -v.d, -ky, -(v.y + lo * WIND_DIR[1]),   // three-space Y = -world y
+          0, 0, v.h, v.z,
+          0, 0, 0, 1
+        );
+        _m.toArray(arr, k * 16);
       }
-      var kx = (hi - lo) * WIND_DIR[0], ky = (hi - lo) * WIND_DIR[1];
-      _m.set(
-        v.w, 0, kx, v.x + lo * WIND_DIR[0],
-        0, -v.d, -ky, -(v.y + lo * WIND_DIR[1]),      // three-space Y = -world y
-        0, 0, v.h, v.z,
-        0, 0, 0, 1
-      );
-      for (var k = 0; k < arrays.length; k++) _m.toArray(arrays[k], b * 16);
+      mesh.instanceMatrix.needsUpdate = true;
     }
-    meshes.forEach(function (m) { m.instanceMatrix.needsUpdate = true; });
   }
 
   // --- camera -----------------------------------------------------------
@@ -276,12 +328,8 @@
     camera.lookAt(tx, ty, tzz);
     camera.updateProjectionMatrix();
 
-    // Side faces go edge-on in the plan view; hide them rather than leaving
-    // sub-pixel slivers to antialias over the paving.
-    if (meshes.length === 3) {
-      meshes[1].visible = cy * cp > EPS_FACE;
-      meshes[2].visible = sy * cp > EPS_FACE;
-    }
+    // No face-visibility toggling: these are real solids, so the depth buffer
+    // decides what is seen and a plan view simply shows their top surfaces.
     return { scale: W / (2 * halfW), halfW: halfW, halfH: halfH, n: n };
   }
 
@@ -446,12 +494,21 @@
         var a = m.instanceMatrix.array;
         for (var i = 0; i < a.length; i++) if (!isFinite(a[i])) r.nonFinite++;
       });
-      r.faces = state.scene.voxels.length * (t >= 1 ? 1 : 3);
+      r.faces = 0;
+      meshes.forEach(function (m) {
+        r.faces += m.count * (m.geometry.attributes.position.count / 3);
+      });
       var vox = state.scene.voxels, m2 = state.qr.modules;
       for (var j = 0; j < vox.length; j++) {
         var v = vox[j];
         if (!(v.w > 0) || !(v.d > 0) || !(v.h > 0)) r.zeroExtent++;
-        if (Math.floor(v.x) !== Math.floor(v.x + v.w - 1e-9) ||
+        /* Ground tiles span whole modules of one colour, so they are checked
+           for grid alignment instead of module containment - a merged region
+           legitimately covers several modules. */
+        if (v.shape === 'tile' || v.shape === 'plate') {
+          if (v.x !== Math.round(v.x) || v.y !== Math.round(v.y) ||
+              v.w !== Math.round(v.w) || v.d !== Math.round(v.d)) r.outOfModule++;
+        } else if (Math.floor(v.x) !== Math.floor(v.x + v.w - 1e-9) ||
             Math.floor(v.y) !== Math.floor(v.y + v.d - 1e-9)) r.outOfModule++;
         if (!m2[Math.floor(v.y)] || !m2[Math.floor(v.y)][Math.floor(v.x)]) r.offDark++;
       }
