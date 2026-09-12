@@ -131,6 +131,21 @@ renderers obey it instead of each reimplementing `pow(z, 1.4)`.
 **A 4-module quiet zone** is reserved as the camera goes overhead, and the
 canvas background is flooded with the paving colour so the margin reads light.
 
+In the WebGL build that margin *is* the renderer's clear colour, which means it
+has to survive a lost GPU context — and it did not. three.js rebuilds its
+background module inside `initGLContext()`, which it re-runs on
+`webglcontextrestored`, and the fresh module starts at **black**. Nothing
+re-applied ours, so after any context loss the quiet zone came back black: the
+one region a scanner needs light. The app now re-applies the clear colour on
+that event.
+
+The sweep could not catch it. It launches ANGLE + SwiftShader, which never drops
+the context; raw `--use-gl=swiftshader` loses it on every startup. It was found
+by *opening the page*, not by testing it — which is the argument for driving the
+real UI even when 288 automated checks are green. There is now a check that
+forces the loss through `WEBGL_lose_context` and asserts the margin returns
+light (0/255 before the fix, 234/255 after).
+
 ### Orthographic camera, and why it is not a tuning knob
 
 The WebGL build uses `OrthographicCamera`. It has to.
@@ -567,17 +582,20 @@ voxel overhanging its module, and it would pass while the real thing fails.
 `index.html` (WebGL), 6 links × 4 seasons × 6 swatches:
 
 ```
-combinations swept   : 144
+combinations swept   : 144  (6 links x 4 seasons x 6 swatches)
 geometry checks      : 288 (no malformed faces)
 
 1. ZBar, clean       : 144/144 (100.0%)
    cv2 Aruco         : 144/144 (100.0%)   [second opinion]
 2. matrix from pixels: 144/144 (100.0%) exact, 0 modules differ
    quiet zone min lum: 234/255 (paving ~234; must stay light)
+   after context loss : 234/255 (forced loss+restore)
 3. through camera    : 432/432 (100.0%)  (warp+blur+dim+noise+downscale)
 4. wind at t=1       : bit-identical across 3 clocks
    wind at t=0       : moving
-6. silhouette aspect : 24/24 in [0.90, 1.05]  range 0.908-1.042  (video 0.96)
+6. silhouette aspect : 24/24 in [0.80, 1.25]  range 0.893-1.183
+   per species        : ginkgo 1.17  oak 1.05  sakura 1.02  willow 0.91
+   spread             : 0.258 (min 0.22)
 ```
 
 `canvas.html` scores identically on the same sweep, including the silhouette

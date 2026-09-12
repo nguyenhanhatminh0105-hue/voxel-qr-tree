@@ -79,8 +79,14 @@ def main():
 
     out = os.path.join(ROOT, args.out)
     os.makedirs(os.path.dirname(out), exist_ok=True)
+    # Explicit CRF rather than imageio's `quality`, which produced an 8.9 MB
+    # seasons.mp4 once the canopy carried per-voxel dappling - x264 spends a lot
+    # of bits on that high-frequency detail. CRF 26 lands at 1.6 MB and every
+    # code-view hold still decodes under ZBar, which is the only quality bar
+    # that matters here.
     imageio.mimwrite(out, frames, fps=args.fps, codec="libx264",
-                     quality=8, macro_block_size=None)
+                     macro_block_size=None,
+                     output_params=["-crf", "26", "-preset", "slow"])
     print(f"  {args.out}  {len(frames)} frames @ {args.fps}fps  "
           f"{frames[0].shape[1]}x{frames[0].shape[0]}  "
           f"{os.path.getsize(out) / 1024:.0f} KB")

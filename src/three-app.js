@@ -428,7 +428,18 @@
       document.getElementById('swatches').appendChild(b);
     });
 
-    function toggle() { state.target = state.target > 0.5 ? 0 : 1; }
+    /* The label is static in the template, so before this it read "Flip to
+       code" while already in the code view - naming the state, not the action.
+       Keep it on the action the click performs. */
+    function syncFlipLabel() {
+      var b = document.getElementById('flip');
+      if (b) b.textContent = state.target > 0.5 ? 'Flip to tree' : 'Flip to code';
+    }
+    function toggle() {
+      state.target = state.target > 0.5 ? 0 : 1;
+      syncFlipLabel();
+    }
+    syncFlipLabel();
     renderer.domElement.addEventListener('click', toggle);
     document.getElementById('flip').addEventListener('click', toggle);
     document.getElementById('png').addEventListener('click', function () {
@@ -447,7 +458,19 @@
       antialias: true,
       preserveDrawingBuffer: true          // for PNG export and for the harness
     });
-    renderer.setClearColor(new THREE.Color(Palette.PAVING), 1);   // quiet zone is paving
+    /* The quiet zone is the clear colour, so it has to survive a lost context.
+       three.js rebuilds its background module inside initGLContext(), which it
+       re-runs on 'webglcontextrestored' - and that fresh module starts at black.
+       Nothing re-applies ours, so after any context loss the 4-module margin
+       comes back BLACK: the one region a scanner needs light. Headless
+       SwiftShader loses the context during startup every time, so this was the
+       shipped behaviour, not an edge case. three.js registers its own restore
+       handler in the constructor above, so ours runs after initGLContext(). */
+    function applyClearColour() {
+      renderer.setClearColor(new THREE.Color(Palette.PAVING), 1);
+    }
+    applyClearColour();
+    renderer.domElement.addEventListener('webglcontextrestored', applyClearColour);
     renderer.domElement.id = 'stage';
     wrap.appendChild(renderer.domElement);
 
