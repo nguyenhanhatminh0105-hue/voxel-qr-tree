@@ -128,6 +128,40 @@ def quiet_zone_is_light(img, geom):
     return worst
 
 
+def quiet_zone_survives_context_loss(arb):
+    """Force a WebGL context loss and confirm the quiet zone comes back light.
+
+    three.js rebuilds its background module in initGLContext(), which it re-runs
+    on 'webglcontextrestored' - and the fresh module starts at a BLACK clear
+    colour. The clear colour IS the quiet zone, so unless the app re-applies it
+    the 4-module margin returns black and the symbol loses the light border a
+    scanner needs.
+
+    The sweep cannot catch this on its own: it launches ANGLE+SwiftShader, which
+    never drops the context. Raw --use-gl=swiftshader loses it on every startup,
+    which is how it was found - by opening the page rather than by testing it.
+    So the loss is forced here explicitly rather than waited for.
+
+    Returns (before, after) corner luma, or None if the build has no WebGL.
+    """
+    lost = arb.page.evaluate("""() => {
+        const c = document.getElementById('stage');
+        const gl = c.getContext('webgl2') || c.getContext('webgl');
+        if (!gl) return false;
+        const ext = gl.getExtension('WEBGL_lose_context');
+        if (!ext) return false;
+        ext.loseContext();
+        setTimeout(() => ext.restoreContext(), 0);
+        return true;
+    }""")
+    if not lost:
+        return None
+    arb.page.wait_for_timeout(600)
+    img = arb.shoot(1.0, clock=1200.0)
+    grey = float(0.299 * img[3, 3, 0] + 0.587 * img[3, 3, 1] + 0.114 * img[3, 3, 2])
+    return grey
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--quick", action="store_true", help="one link only")
@@ -240,6 +274,12 @@ def main():
                                 save(sim, f"fail_camera_{sp}_{sw}.png")
                                 saved_cam = True
 
+        # ---- quiet zone must survive a lost GPU context -----------------
+        quiet_after = quiet_zone_survives_context_loss(arb)
+        if quiet_after is not None and quiet_after < 200:
+            fails.append(
+                f"quiet zone went dark after context restore: luma {quiet_after:.0f}/255")
+
     def pct(a, b):
         return f"{a}/{b} ({100.0 * a / max(1, b):.1f}%)"
 
@@ -253,6 +293,10 @@ def main():
     print(f"   cv2 Aruco         : {pct(aruco_ok, clean_n)}   [second opinion]")
     print(f"2. matrix from pixels: {pct(matrix_perfect, matrix_n)} exact, 0 modules differ")
     print(f"   quiet zone min lum: {worst_quiet:.0f}/255 (paving ~234; must stay light)")
+    if quiet_after is None:
+        print("   after context loss : n/a (no WebGL context on this build)")
+    else:
+        print(f"   after context loss : {quiet_after:.0f}/255 (forced loss+restore)")
     print(f"3. through camera    : {pct(cam_ok, cam_n)}  "
           f"({args.cam_trials} trials each: warp+blur+dim+noise+downscale)")
     lo = min(a for a, _, _ in aspects); hi = max(a for a, _, _ in aspects)

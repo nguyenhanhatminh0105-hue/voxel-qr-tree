@@ -218,7 +218,18 @@
       document.getElementById('swatches').appendChild(b);
     });
 
-    function toggle() { state.target = state.target > 0.5 ? 0 : 1; }
+    /* The label is static in the template, so before this it read "Flip to
+       code" while already in the code view - naming the state, not the action.
+       Keep it on the action the click performs. */
+    function syncFlipLabel() {
+      var b = document.getElementById('flip');
+      if (b) b.textContent = state.target > 0.5 ? 'Flip to tree' : 'Flip to code';
+    }
+    function toggle() {
+      state.target = state.target > 0.5 ? 0 : 1;
+      syncFlipLabel();
+    }
+    syncFlipLabel();
     canvas.addEventListener('click', toggle);
     document.getElementById('flip').addEventListener('click', toggle);
     document.getElementById('png').addEventListener('click', exportPNG);
