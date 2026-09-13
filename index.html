@@ -9,8 +9,9 @@
 :root {
   --paving: #edeae3;
   --ink: #2a2620;
-  --muted: #7d766a;
-  --line: #d9d4c8;
+  --muted: #6b6459;       /* 4.87:1 on paving - AA for 11px body text */
+  --line: #d9d4c8;        /* decorative only: the stage frame */
+  --edge: #8b8374;        /* 3.12:1 on paving - interactive component borders (WCAG 1.4.11) */
   --panel: #f6f4ef;
   --focus: #3a4a7c;
 }
@@ -33,6 +34,11 @@ html, body {
   max-width: 1100px;
   margin: 0 auto;
   padding: 14px;
+  /* viewport-fit=cover means the page owns the notch area; claim it back */
+  padding-top: max(14px, env(safe-area-inset-top));
+  padding-right: max(14px, env(safe-area-inset-right));
+  padding-bottom: max(14px, env(safe-area-inset-bottom));
+  padding-left: max(14px, env(safe-area-inset-left));
   gap: 12px;
 }
 
@@ -46,13 +52,11 @@ h1 {
   white-space: nowrap;
 }
 
-h1 span { color: var(--muted); font-weight: 400; }
-
 #url {
   flex: 1 1 260px;
   min-width: 0;
   padding: 9px 12px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--edge);
   border-radius: 9px;
   background: #fff;
   color: inherit;
@@ -93,7 +97,7 @@ footer { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
   align-items: flex-start;
   gap: 1px;
   padding: 6px 11px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--edge);
   border-radius: 9px;
   background: var(--panel);
   color: var(--muted);
@@ -104,7 +108,9 @@ footer { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
 
 .tab .season { font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; }
 .tab .sp { font-size: 13px; font-weight: 600; color: var(--ink); }
+.tab:hover { background: #fff; border-color: var(--muted); }
 .tab.on { border-color: var(--ink); background: #fff; color: var(--ink); }
+.swatch:hover { box-shadow: 0 0 0 2px var(--muted); }
 .tab:focus-visible, .swatch:focus-visible, button:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 
 #swatches { display: flex; gap: 6px; }
@@ -113,7 +119,7 @@ footer { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
   width: 26px; height: 26px;
   border-radius: 50%;
   border: 2px solid transparent;
-  box-shadow: 0 0 0 1px var(--line);
+  box-shadow: 0 0 0 1px var(--edge);
   cursor: pointer;
   padding: 0;
 }
@@ -124,7 +130,7 @@ footer { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
 
 .actions button {
   padding: 8px 13px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--edge);
   border-radius: 9px;
   background: var(--panel);
   color: var(--ink);
@@ -135,22 +141,35 @@ footer { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
 
 .actions button:hover { background: #fff; border-color: var(--muted); }
 
-.readout {
-  flex: 1 0 100%;
-  font-size: 11px;
-  color: var(--muted);
-  font-variant-numeric: tabular-nums;
-}
+/* Short, and the only part that is an aria-live region: a screen reader should
+   hear the state change, not nine fields of build metadata on every keystroke. */
+.scan { flex: 1 0 100%; font-size: 11px; color: var(--ink); font-weight: 600; }
+.scan.err { color: #8e2f4b; }
+.scan.ok { color: #2f6b45; }
+.scan.saved { color: #2f6b45; }
+.scan:empty { display: none; }
 
-.readout.err { color: #9e3b58; font-weight: 600; }
+/* An unencodable or empty input leaves the previous scene on the stage; say so
+   visually instead of presenting a stale render as a finished result. */
+#stagewrap.invalid { opacity: 0.38; }
+.actions button[disabled] { opacity: 0.45; cursor: not-allowed; }
 
 @media (max-width: 620px) {
-  #app { padding: 10px; gap: 9px; }
+  #app {
+    padding: 10px;
+    padding-top: max(10px, env(safe-area-inset-top));
+    padding-right: max(10px, env(safe-area-inset-right));
+    padding-bottom: max(10px, env(safe-area-inset-bottom));
+    padding-left: max(10px, env(safe-area-inset-left));
+    gap: 9px;
+  }
   h1 { flex: 1 0 100%; }
   .actions { margin-left: 0; flex: 1 0 100%; }
   .actions button { flex: 1; }
-  .tab { padding: 5px 9px; }
+  .tab { padding: 9px 9px; }
   .tab .sp { font-size: 12px; }
+  #swatches { gap: 10px; }
+  .swatch { width: 36px; height: 36px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -162,7 +181,7 @@ footer { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
 <body>
 <div id="app">
   <header>
-    <h1>QR Arboretum <span>— a URL, grown · WebGL</span></h1>
+    <h1>QR Arboretum</h1>
     <input id="url" type="url" spellcheck="false" autocomplete="off"
            placeholder="https://example.com" aria-label="URL to encode">
   </header>
@@ -178,7 +197,10 @@ footer { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
       <button id="flip" type="button">Flip to code</button>
       <button id="png" type="button">PNG</button>
     </div>
-    <div id="readout" class="readout"></div>
+    <!-- Kept, but empty unless there is something to say: an encode
+         error, the empty-input prompt, or a save confirmation. .scan:empty
+         collapses it, so nothing shows in the normal case. -->
+    <div id="scan" class="scan" aria-live="polite"></div>
   </footer>
 </div>
 
@@ -1279,7 +1301,7 @@ footer { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
      interior columns keep a proportional body rather than a thin lid, which is
      what stopped the crown reading as a hanging curtain. Capped so very large
      codes stay affordable. */
-  var SHELL_MIN = 3.5, SHELL_FRAC = 0.62, SHELL_MAX = 7.5;
+  var SHELL_MIN = 4.2, SHELL_FRAC = 0.70, SHELL_MAX = 9.0;
   /* The crown needs an underside too. Filling only downward from the top left
      each column a cap on a much longer span - a hollow dome with nothing
      beneath it, which is why the crown looked unmoored from the plot.
@@ -1295,7 +1317,7 @@ footer { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
 
      This ratio is also the cheapest lever on voxel count: you see far less of
      the underside than the top, so thinning it costs little visually. */
-  var SHELL_LOWER = 0.45;
+  var SHELL_LOWER = 0.58;
 
   var SPECIES = [
     { id: 'sakura', season: 'Spring', name: 'Sakura', fall: 'petals' },
@@ -1447,6 +1469,24 @@ footer { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
     }
   };
 
+  /* A cluster of small clouds rather than one big ellipsoid. One cloud reads
+     as a ball; several overlapping at jittered offsets read as foliage. The
+     core is drawn first and is deliberately large enough to keep the interior
+     continuous - canopy only materialises over dark modules, so a lobe pushed
+     out on its own can land over a light region and leave a bite out of the
+     crown. The core is what stops that. */
+  Ctx.prototype.clump = function (cx, cy, cz, r, halfH, count, lowBound) {
+    var rnd = this.rnd;
+    this.cloud(cx, cy, cz, r * 0.80, halfH * 0.94, lowBound);
+    for (var i = 0; i < count; i++) {
+      var a = rnd() * Math.PI * 2;
+      var d = r * (0.26 + rnd() * 0.40);
+      this.cloud(cx + Math.cos(a) * d, cy + Math.sin(a) * d,
+                 cz + halfH * (rnd() - 0.5) * 0.70,
+                 r * (0.40 + rnd() * 0.26), halfH * (0.54 + rnd() * 0.32), lowBound);
+    }
+  };
+
   Ctx.prototype.dome = function (cx, cy, cz, r, halfH) {
     this.cloud(cx, cy, cz, r, halfH, 0);
   };
@@ -1580,8 +1620,15 @@ footer { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
          their whole footprint, visible now that they are rounded. Down at the
          crown's underside the whole canopy is above it, and at 35 degrees of
          elevation the crown hides its own underside. */
+      /* Back at mid-crown. It was pushed down to the underside because a
+         full-module plate stuck out past the rounded leaves on thin rim
+         columns - but that was measured against leaves of 0.48-0.74 at
+         pack 0.95. Foliage is now 0.55-0.82 at pack 0.84, dense enough to
+         swallow it, and at the underside the overhang read as a flat shelf
+         protruding below the crown's lower rim. */
+      var mid = cz[0] + (cz[1] - cz[0]) * 0.42;
       this.out.push({
-        x: mx, y: my, z: cz[0] + 0.10,
+        x: mx, y: my, z: mid,
         w: 1, d: 1, h: 0.12,
         top: deep.top, side: deep.sideA, sideA: deep.sideA, sideB: deep.sideB,
         kind: 'leaf', shape: 'plate', leanX: 0, leanY: 0,
@@ -1738,14 +1785,26 @@ footer { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
     var trunkH = n * 0.26;
     var R = n * 0.350;                       // the reference tree; the anchor
     c.trunk(cx, cy, 0, trunkH, 0.62);
-    c.cloud(cx + 0.5, cy + 0.5, trunkH + n * 0.32, R, n * 0.34);
-    for (var i = 0; i < 4; i++) {
-      var a = (i / 4) * Math.PI * 2 + rnd() * 0.5;
-      c.cloud(cx + 0.5 + Math.cos(a) * R * 0.55,
-              cy + 0.5 + Math.sin(a) * R * 0.55,
-              trunkH + n * (0.24 + rnd() * 0.12), R * 0.66, n * 0.17);
+
+    /* A cherry is TIERED, not spherical: broad horizontal shelves of blossom
+       with the limbs showing between them. The previous crown was one cloud of
+       radius R with four satellites at 0.55R and radius 0.66R - they sat
+       entirely inside the parent, so the union was a smooth ellipsoid and read
+       as a ball. Satellites now ride at 0.78R and are smaller than the gap
+       they leave, so the outline is lobed and the sky comes through. */
+    var LOBES = 7;
+    // core: continuous, so the crown never shows a bite
+    c.clump(cx + 0.5, cy + 0.5, trunkH + n * 0.33, R * 0.88, n * 0.24, 6);
+    for (var i = 0; i < LOBES; i++) {
+      var a = (i / LOBES) * Math.PI * 2 + rnd() * 0.45;
+      var lift = (i % 2) ? 0.05 : 0.0;       // alternate heights = tiered outline
+      c.clump(cx + 0.5 + Math.cos(a) * R * 0.60,
+              cy + 0.5 + Math.sin(a) * R * 0.60,
+              trunkH + n * (0.25 + lift), R * 0.40, n * 0.135, 3);
+      // a limb out to each lobe, so the branching reads in the gaps
+      c.limb(cx + 0.5, cy + 0.5, a, R * 0.72, trunkH * 0.92, n * 0.045, 0.34);
     }
-    c.cloud(cx + 0.5, cy + 0.5, trunkH + n * 0.70, R * 0.54, n * 0.185);
+    c.clump(cx + 0.5, cy + 0.5, trunkH + n * 0.62, R * 0.46, n * 0.155, 4);
   }
 
   /* Summer. Thick trunk, heavy forking limbs, deep rounded crown - taller and
@@ -1763,14 +1822,21 @@ footer { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
       c.limb(cx + 0.5, cy + 0.5, (i / limbs) * Math.PI * 2 + rnd() * 0.6,
         R * (0.5 + rnd() * 0.4), trunkH * 0.66, n * 0.10, 0.48);
     }
-    c.cloud(cx + 0.5, cy + 0.5, trunkH + n * 0.36, R, n * 0.34);
-    for (var j = 0; j < 4; j++) {
-      var a = (j / 4) * Math.PI * 2 + rnd() * 0.7;
-      c.cloud(cx + 0.5 + Math.cos(a) * R * 0.52,
-              cy + 0.5 + Math.sin(a) * R * 0.52,
-              trunkH + n * (0.31 + rnd() * 0.14), R * 0.60, n * 0.24);
+    /* An oak crown is a cluster of heavy masses, not one dome. The lobes are
+       deliberately uneven in radius and height - an oak is the lumpiest
+       silhouette of the four and that irregularity is the species read. */
+    c.clump(cx + 0.5, cy + 0.5, trunkH + n * 0.34, R * 0.82, n * 0.27, 7);
+    var OLOBES = 7;
+    for (var j = 0; j < OLOBES; j++) {
+      var a = (j / OLOBES) * Math.PI * 2 + rnd() * 0.6;
+      var far = 0.52 + rnd() * 0.18;             // uneven reach, but overlapping
+      var rr = R * (0.36 + rnd() * 0.16);        // uneven mass
+      c.clump(cx + 0.5 + Math.cos(a) * R * far,
+              cy + 0.5 + Math.sin(a) * R * far,
+              trunkH + n * (0.26 + rnd() * 0.20), rr, n * (0.17 + rnd() * 0.09), 3);
+      c.limb(cx + 0.5, cy + 0.5, a, R * (far + 0.16), trunkH * 0.80, n * 0.085, 0.40);
     }
-    c.cloud(cx + 0.5, cy + 0.5, trunkH + n * 0.70, R * 0.45, n * 0.205);
+    c.clump(cx + 0.5, cy + 0.5, trunkH + n * 0.66, R * 0.42, n * 0.19, 4);
   }
 
   /* Autumn ginkgo. Columnar and distinctly taller than wide - it holds the far
@@ -1802,16 +1868,23 @@ footer { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
        crown rather than the pole, or it is a lollipop again. Clump count scales
        with it so the axis keeps the same ~0.048n spacing and does not thin. */
     var crownH = n * 0.70;
-    var clumps = 15 + Math.floor(rnd() * 4);
+    var clumps = 19 + Math.floor(rnd() * 4);
     for (var i = 0; i < clumps; i++) {
       var u = i / (clumps - 1);          // 0 at the crown base, 1 at the apex
       var taper = 1 - 0.62 * u * u;
       var a = rnd() * Math.PI * 2;
-      var rad = (0.03 + rnd() * 0.17) * n * taper;
-      c.cloud(cx + 0.5 + Math.cos(a) * rad,
+      /* A ginkgo is a FAN: narrow at the bole and widening toward the top,
+         the opposite of a conifer. Radius grows with u before the apex taper
+         pulls it back, which is what separates it from a column of blobs. */
+      var flare = 0.55 + 0.85 * u;
+      var rad = (0.03 + rnd() * 0.17) * n * taper * flare;
+      /* Radius and sub-count both up: on a narrow axis, consecutive clumps
+         were not overlapping, and a gap on a columnar crown reads as a bite
+         taken out of the tree rather than as foliage texture. */
+      c.clump(cx + 0.5 + Math.cos(a) * rad,
               cy + 0.5 + Math.sin(a) * rad,
               trunkH + n * 0.02 + u * crownH,
-              n * (0.150 - 0.055 * u), n * (0.150 - 0.030 * u));
+              n * (0.205 - 0.060 * u), n * (0.160 - 0.030 * u), 3);
     }
     // The apex clump sits on the trunk column, which is dark by construction.
     c.cloud(cx + 0.5, cy + 0.5, trunkH + n * 0.02 + crownH, n * 0.085, n * 0.120);
@@ -1829,21 +1902,25 @@ footer { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
   function plantWillow(c, n, cx, cy) {
     var rnd = c.rnd;
     var trunkH = n * 0.30;
-    var R = n * 0.462;                       // broad and low
-    var domeZ = trunkH + n * 0.24;   // low dome
+    var R = n * 0.468;                       // broad and low, but not a ball
+    var domeZ = trunkH + n * 0.215;  // low dome: willow anchors the low end
+                                     // of the four-species silhouette spread
     c.trunk(cx, cy, 0, trunkH, 0.66);
     // flat-bottomed rather than a true dome: -0.75 keeps the underside high
     // enough to leave the trunk visible while still reading as a canopy.
-    c.cloud(cx + 0.5, cy + 0.5, domeZ, R, n * 0.30, -0.75);
+    // -0.75 keeps the underside high enough to leave the trunk visible
+    c.clump(cx + 0.5, cy + 0.5, domeZ, R * 1.02, n * 0.235, 8, -0.75);
 
     var strands = Math.round(n * 1.4);
     for (var t = 0; t < strands; t++) {
       var a = rnd() * Math.PI * 2;
-      var r = R * (0.60 + rnd() * 0.42);
+      /* Strands hang from the rim rather than the whole underside, and fall
+         further: a willow is read by the curtain, not by the dome. */
+      var r = R * (0.72 + rnd() * 0.34);
       var top = domeZ - n * 0.02;
       c.tendril(Math.floor(cx + 0.5 + Math.cos(a) * r),
                 Math.floor(cy + 0.5 + Math.sin(a) * r),
-                top, Math.max(1.0, top - (0.02 + rnd() * 0.07) * n));
+                top, Math.max(1.0, top - (0.05 + rnd() * 0.11) * n));
     }
   }
 
@@ -1870,7 +1947,10 @@ footer { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
     if (!planter) throw new Error('unknown species: ' + opts.species);
     planter(c, n, centre[0], centre[1]);
     // One pass over the merged spans, after every cloud has been recorded.
-    c.growCanopy(0.95, 0.48, 0.74);
+    /* pack 0.95 -> 0.84 overlaps each leaf further onto the one below, and
+       bigger leaves close the gaps between columns: the crown reads as
+       foliage rather than as a scatter with the plot showing through. */
+    c.growCanopy(0.84, 0.55, 0.82);
     c.backingPlates();
     var canopy = c.out.length;
     c.groundBlocks();
@@ -1914,8 +1994,23 @@ footer { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
     var crownH = isFinite(c.crownTop) ? c.crownTop - c.crownBottom : 0;
     var groundTop = SLAB_TOP + 0.82;
 
+    var crownTops = [];
+    var ckeys = Object.keys(c.crownZ);
+    for (var ci = 0; ci < ckeys.length; ci++) {
+      var ck = Number(ckeys[ci]);
+      var czz = c.crownZ[ck];
+      if (!czz || !isFinite(czz[1])) continue;
+      crownTops.push({ x: ck % n, y: (ck - (ck % n)) / n, z: czz[1] });
+    }
+
     return {
       matrix: matrix, n: n, palette: pal, voxels: c.out, maxZ: maxZ,
+      /* Top of each crown column. Used to sit snow on a winter canopy as a
+         decorative layer: the audited TOP FACE of a leaf is the surface the
+         code is read from, so tinting it white would lift dark modules toward
+         light and break scanning. Caps are drawn over it and faded out with
+         the weather, long before the plan view. */
+      crownTops: crownTops,
       centre: centre, species: opts.species,
       stats: {
         total: c.out.length,
@@ -2261,7 +2356,140 @@ footer { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
     return faces.length;
   }
 
+  /* The stage carries cursor:pointer and a click handler but was tabIndex -1,
+     so the on-screen hint instructed a gesture keyboard users could not
+     perform. This gives it focus and a key path without changing the camera. */
+  function attachStageKeys(el, onTap) {
+    el.tabIndex = 0;
+    el.setAttribute('role', 'button');
+    el.setAttribute('aria-label',
+      'Voxel tree. Press Enter to flip between the tree and the scannable code.');
+    el.addEventListener('keydown', function (ev) {
+      if (ev.key === 'Enter' || ev.key === ' ') { onTap(); ev.preventDefault(); }
+    });
+  }
+
+  /* Ambient life. Both renderers read these so the two builds agree on what
+     the weather is doing; each draws it with its own primitives.
+
+     Fall is expressed as descents per second: the old 0.6-1.7 meant a petal
+     crossed the whole scene in well under two seconds, which read as rain
+     rather than drift. Winter is snow - slower, larger, and it wanders. */
+  /* kind drives the silhouette, and each one is its season: a cherry petal,
+     a winged samara, a ginkgo fan, a six-spoke flake. SPECIES already declared
+     these (petals / seeds / leaves / snow) and the renderers were drawing a
+     square for three of the four. Counts come down as the sizes go up - the
+     brief is a moderate amount of weather, not a blizzard. */
+  var WEATHER = {
+    sakura:  { kind: 'petal', fall: 0.13, spread: 0.10, size: 0.98, sway: 0.9, count: 54, snow: false },
+    oak:     { kind: 'seed',  fall: 0.17, spread: 0.12, size: 0.90, sway: 1.2, count: 46, snow: false },
+    ginkgo:  { kind: 'leaf',  fall: 0.15, spread: 0.11, size: 1.08, sway: 1.4, count: 50, snow: false },
+    willow:  { kind: 'flake', fall: 0.10, spread: 0.07, size: 1.02, sway: 1.7, count: 66, snow: true }
+  };
+  /* Snow has to read against the paving, which is itself pale and warm
+     (#edeae3). Near-white snow was invisible on it. A cool blue-grey
+     separates by temperature rather than by lightness. */
+  var SNOW_TINT = '#c3d1de';
+
+  function weatherFor(species) { return WEATHER[species] || WEATHER.sakura; }
+
+  /* One shape definition, both renderers. The canvas build calls this per
+     particle; the WebGL build paints it once into an offscreen canvas and uses
+     that as the point sprite, so the two builds cannot drift apart.
+     Draws into a box of side `s` centred on (cx, cy). The caller sets
+     fillStyle and strokeStyle. */
+  function paintFallShape(ctx, kind, cx, cy, s, rot) {
+    var r = s / 2;
+    ctx.save();
+    ctx.translate(cx, cy);
+    if (rot) ctx.rotate(rot);
+    if (kind === 'cap') {
+      // a soft mound, wider than tall: snow lying on a leaf
+      ctx.beginPath();
+      ctx.ellipse(0, 0, r * 0.98, r * 0.56, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+      return;
+    }
+    if (kind === 'flake') {
+      ctx.lineWidth = Math.max(1, s * 0.15);
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      for (var i = 0; i < 3; i++) {
+        var a = i * Math.PI / 3;
+        ctx.moveTo(-Math.cos(a) * r, -Math.sin(a) * r);
+        ctx.lineTo(Math.cos(a) * r, Math.sin(a) * r);
+      }
+      // short barbs, which is what separates a flake from an asterisk
+      for (var j = 0; j < 6; j++) {
+        var b = j * Math.PI / 3, bx = Math.cos(b) * r * 0.62, by = Math.sin(b) * r * 0.62;
+        ctx.moveTo(bx, by);
+        ctx.lineTo(bx + Math.cos(b + 0.9) * r * 0.28, by + Math.sin(b + 0.9) * r * 0.28);
+        ctx.moveTo(bx, by);
+        ctx.lineTo(bx + Math.cos(b - 0.9) * r * 0.28, by + Math.sin(b - 0.9) * r * 0.28);
+      }
+      ctx.stroke();
+    } else if (kind === 'leaf') {
+      // ginkgo: a fan, notched at the crown, on a short stalk
+      ctx.beginPath();
+      ctx.moveTo(0, r * 0.96);
+      ctx.quadraticCurveTo(-r * 0.98, r * 0.18, -r * 0.66, -r * 0.74);
+      ctx.quadraticCurveTo(-r * 0.22, -r * 0.46, 0, -r * 0.58);
+      ctx.quadraticCurveTo(r * 0.22, -r * 0.46, r * 0.66, -r * 0.74);
+      ctx.quadraticCurveTo(r * 0.98, r * 0.18, 0, r * 0.96);
+      ctx.fill();
+    } else if (kind === 'seed') {
+      // samara: a seed body with one wing, the thing that spins as it falls
+      ctx.beginPath();
+      ctx.ellipse(0, r * 0.46, r * 0.32, r * 0.27, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(0, r * 0.34);
+      ctx.quadraticCurveTo(r * 0.88, -r * 0.10, r * 0.22, -r * 0.96);
+      ctx.quadraticCurveTo(-r * 0.06, -r * 0.18, 0, r * 0.34);
+      ctx.fill();
+    } else {
+      // cherry petal: rounded, with the characteristic notch at the tip
+      ctx.beginPath();
+      ctx.moveTo(0, r * 0.92);
+      ctx.bezierCurveTo(-r * 1.0, r * 0.40, -r * 0.82, -r * 0.58, -r * 0.16, -r * 0.90);
+      ctx.quadraticCurveTo(0, -r * 0.62, r * 0.16, -r * 0.90);
+      ctx.bezierCurveTo(r * 0.82, -r * 0.58, r * 1.0, r * 0.40, 0, r * 0.92);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  /* Birds: a few crossing the sky on slow circular arcs, well above the crown
+     and outside the plot footprint, so they stay small disconnected blobs that
+     the silhouette measurement discards. Deterministic in `time` - no state,
+     so both renderers and the test harness agree frame for frame. */
+  var BIRD_COUNT = 3;
+  var BIRD_PERIOD = 26000;        // ms for a full circuit
+  var BIRD_SPAN = 0.62;           // orbit radius, as a fraction of plot width
+
+  function birdsAt(n, maxZ, time) {
+    var out = [];
+    for (var i = 0; i < BIRD_COUNT; i++) {
+      var ph = (time / BIRD_PERIOD + i / BIRD_COUNT) * Math.PI * 2;
+      var r = n * BIRD_SPAN * (0.82 + 0.18 * Math.sin(ph * 0.7 + i));
+      out.push({
+        x: n / 2 + Math.cos(ph) * r,
+        y: n / 2 + Math.sin(ph) * r * 0.72,
+        z: maxZ + n * (0.30 + 0.10 * Math.sin(ph * 1.7 + i * 2)),
+        // wing phase drives the V opening; a flat V reads as a glide
+        flap: Math.sin(time / 190 + i * 1.7),
+        dir: Math.cos(ph) >= 0 ? 1 : -1
+      });
+    }
+    return out;
+  }
+
   return {
+    attachStageKeys: attachStageKeys,
+    weatherFor: weatherFor, birdsAt: birdsAt, SNOW_TINT: SNOW_TINT,
+    paintFallShape: paintFallShape,
+    BIRD_COUNT: BIRD_COUNT,
     DEG: DEG, QUIET: QUIET, SLAB_BOTTOM: SLAB_BOTTOM, SLAB_TOP: SLAB_TOP,
     WIND_AMP: WIND_AMP, WIND_FREQ: WIND_FREQ, WIND_DIR: WIND_DIR,
     EPS_AREA: EPS_AREA,
@@ -6190,7 +6418,7 @@ void main() {
 
   // swatch null = use the species' own foliage colour
   var state = { text: DEFAULT_URL, species: 'sakura', swatch: null, t: 0, target: 0 };
-  var renderer, scene3, camera, petals;
+  var renderer, scene3, camera, petals, birds, snowCaps;
   var meshes = [];            // [top, sideY, sideX] InstancedMesh
   var boxes = null;           // voxels plus the slab, in draw order
   var W = 0, H = 0;
@@ -6218,7 +6446,7 @@ void main() {
      gives a sphere form without a light source that would push top faces
      brighter and through the contrast floor. */
   function withShading(g, banded) {
-    g = g.toNonIndexed();
+    if (g.index) g = g.toNonIndexed();   // Icosahedron is already non-indexed
     g.computeVertexNormals();
     var pos = g.attributes.position, nrm = g.attributes.normal;
     var col = new Float32Array(pos.count * 3);
@@ -6267,8 +6495,18 @@ void main() {
 
   // --- scene build ------------------------------------------------------
   function rebuild() {
+    /* No silent fallback to DEFAULT_URL. An empty field used to render a
+       finished, exportable code for somebody else's link while the placeholder
+       implied otherwise. */
+    if (!state.text) {
+      state.error = null;
+      state.empty = true;
+      updateReadout();
+      return;
+    }
+    state.empty = false;
     try {
-      state.qr = QR.encode(state.text || DEFAULT_URL, { ecl: 'M' });
+      state.qr = QR.encode(state.text, { ecl: 'M' });
       state.error = null;
     } catch (e) {
       state.error = e.message;
@@ -6328,15 +6566,27 @@ void main() {
   }
 
   function buildPetals() {
-    if (petals) { scene3.remove(petals); petals.geometry.dispose(); petals.material.dispose(); petals = null; }
+    if (petals) {
+      scene3.remove(petals); petals.geometry.dispose();
+      if (petals.material.map) petals.material.map.dispose();
+      petals.material.dispose(); petals = null;
+    }
+    if (birds) { scene3.remove(birds); birds.geometry.dispose(); birds.material.dispose(); birds = null; }
+    if (snowCaps) {
+      scene3.remove(snowCaps); snowCaps.geometry.dispose();
+      if (snowCaps.material.map) snowCaps.material.map.dispose();
+      snowCaps.material.dispose(); snowCaps = null;
+    }
     if (reduceMotion) return;
     var n = state.scene.n, maxZ = state.scene.maxZ;
+    var wx = Render.weatherFor(state.species);
     var rnd = Scene.mulberry32(Scene.hashString(state.scene.id + '#p'));
-    var count = 90;
+    var count = wx.count;
     var pos = new Float32Array(count * 3);
     var meta = [];
     for (var i = 0; i < count; i++) {
-      meta.push({ x: rnd() * n, y: rnd() * n, fall: 0.6 + rnd() * 1.1,
+      // debris stays over the plot - the weather belongs to the arboretum
+      meta.push({ x: rnd() * n, y: rnd() * n, fall: wx.fall + rnd() * wx.spread,
                   drift: rnd() * 6.283, top: maxZ });
       pos[i * 3] = meta[i].x;
       pos[i * 3 + 1] = -meta[i].y;               // three-space Y
@@ -6344,10 +6594,18 @@ void main() {
     }
     var g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    /* The sprite is the same shape the canvas build draws, painted once into
+       an offscreen canvas - one definition, so the two builds cannot drift. */
     petals = new THREE.Points(g, new THREE.PointsMaterial({
-      color: new THREE.Color(state.scene.palette.mat.leaf.sideA),
-      size: 0.42, sizeAttenuation: true, transparent: true
+      map: fallSprite(wx.kind, wx.snow ? Render.SNOW_TINT : state.scene.palette.mat.leaf.sideA),
+      /* The camera is orthographic, where sizeAttenuation derives point size
+         from perspective distance and collapses these to nothing. Size is set
+         in pixels each frame from the camera scale instead, so a flake stays
+         a fixed number of modules wide however the plot is framed. */
+      size: 8, sizeAttenuation: false, transparent: true,
+      alphaTest: 0.12, depthWrite: false
     }));
+    petals.userData.weather = wx;
     petals.userData.meta = meta;
     petals.frustumCulled = false;
     scene3.add(petals);
@@ -6466,6 +6724,8 @@ void main() {
     var amp = reduceMotion ? 0 : WIND_AMP * (1 - e) * (1 - e);
     applyWind(clock, amp);
     if (petals) {
+      var pw = petals.userData.weather || { size: 1 };
+      petals.material.size = Math.max(3, pw.size * geom.scale);
       var fade = Math.max(0, 1 - e / 0.6);
       petals.visible = fade > 0;
       petals.material.opacity = fade * 0.9;
@@ -6473,12 +6733,95 @@ void main() {
       for (var i = 0; i < meta.length; i++) {
         var m = meta[i];
         p.array[i * 3 + 2] = m.top - ((clock * 0.001 * m.fall + m.drift) % 1) * (m.top + 1);
-        p.array[i * 3] = m.x + Math.sin(clock * 0.0016 + m.drift) * 0.5;
+        var swayAmp = (petals.userData.weather || { sway: 0.9 }).sway;
+        p.array[i * 3] = m.x + Math.sin(clock * 0.0016 + m.drift) * swayAmp;
       }
       p.needsUpdate = true;
     }
+    var ambient = Math.max(0, 1 - e / 0.6);
+    ensureSnowCaps();
+    if (snowCaps) {
+      snowCaps.visible = ambient > 0;
+      snowCaps.material.opacity = ambient * 0.8;
+      snowCaps.material.size = Math.max(4, 0.68 * geom.scale);
+    }
+    updateBirds(clock, ambient);
     renderer.render(scene3, camera);
     return geom;
+  }
+
+  /* Birds as open V line segments - two strokes per bird, so they read as
+     birds rather than dots at this scale. They share the weather's fade, so
+     the sky is empty long before the matrix has to read. */
+  /* Snow on a winter canopy. Decorative and faded with the weather: the leaf's
+     top face is the audited surface the code is read from, so it can never be
+     repainted white without lifting dark modules toward light. */
+  function ensureSnowCaps() {
+    if (snowCaps || !state.scene || reduceMotion) return;
+    if (!Render.weatherFor(state.species).snow || !state.scene.crownTops) return;
+    var caps = state.scene.crownTops;
+    var pos = new Float32Array(Math.ceil(caps.length / 2) * 3), w = 0;
+    for (var i = 0; i < caps.length; i += 2) {
+      pos[w * 3] = caps[i].x + 0.5;
+      pos[w * 3 + 1] = -(caps[i].y + 0.5);
+      pos[w * 3 + 2] = caps[i].z + 0.18;
+      w++;
+    }
+    var g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(pos.subarray(0, w * 3), 3));
+    snowCaps = new THREE.Points(g, new THREE.PointsMaterial({
+      map: fallSprite('cap', Render.SNOW_TINT),
+      size: 10, sizeAttenuation: false, transparent: true,
+      alphaTest: 0.10, depthWrite: false
+    }));
+    snowCaps.frustumCulled = false;
+    scene3.add(snowCaps);
+  }
+
+  function fallSprite(kind, colour) {
+    var c = document.createElement('canvas');
+    c.width = c.height = 64;
+    var g2 = c.getContext('2d');
+    g2.fillStyle = colour;
+    g2.strokeStyle = colour;
+    Render.paintFallShape(g2, kind, 32, 32, 58, 0);
+    var tex = new THREE.CanvasTexture(c);
+    tex.needsUpdate = true;
+    return tex;
+  }
+
+  function ensureBirds() {
+    if (birds || !state.scene || reduceMotion) return;
+    var g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(
+      new Float32Array(Render.BIRD_COUNT * 4 * 3), 3));
+    birds = new THREE.LineSegments(g, new THREE.LineBasicMaterial({
+      color: new THREE.Color(state.scene.palette.soil), transparent: true
+    }));
+    birds.frustumCulled = false;
+    scene3.add(birds);
+  }
+
+  function updateBirds(clock, fade) {
+    if (reduceMotion) return;
+    ensureBirds();
+    if (!birds) return;
+    birds.visible = fade > 0;
+    birds.material.opacity = fade * 0.6;
+    if (fade <= 0) return;
+    var list = Render.birdsAt(state.scene.n, state.scene.maxZ, clock);
+    var a = birds.geometry.attributes.position.array;
+    var span = state.scene.n * 0.035;
+    for (var i = 0; i < list.length; i++) {
+      var b = list[i], o = i * 12, lift = b.flap * 0.42 * span;
+      // left stroke: wingtip -> body
+      a[o] = b.x - span;      a[o + 1] = -b.y; a[o + 2] = b.z + lift;
+      a[o + 3] = b.x;         a[o + 4] = -b.y; a[o + 5] = b.z;
+      // right stroke: body -> wingtip
+      a[o + 6] = b.x;         a[o + 7] = -b.y; a[o + 8] = b.z;
+      a[o + 9] = b.x + span;  a[o + 10] = -b.y; a[o + 11] = b.z + lift;
+    }
+    birds.geometry.attributes.position.needsUpdate = true;
   }
 
   function frame() {
@@ -6503,18 +6846,39 @@ void main() {
     renderer.setSize(W, H, true);
   }
 
+  /* The export was silent. Routed through #scan so it is announced, not just
+     shown - the download is the last thing the visitor experiences. */
+  var saveTimer = null;
+  function confirmSave(name) {
+    var scan = document.getElementById('scan');
+    if (!scan) return;
+    clearTimeout(saveTimer);
+    scan.className = 'scan saved';
+    scan.textContent = 'Saved ' + name;
+    saveTimer = setTimeout(updateReadout, 4000);
+  }
+
   function updateReadout() {
-    var el = document.getElementById('readout');
-    if (!el) return;
-    if (state.error) { el.textContent = state.error; el.className = 'readout err'; return; }
-    var pal = state.scene.palette, st = state.scene.stats;
-    el.className = 'readout';
-    el.textContent = 'three.js r' + THREE.REVISION + '  ·  version ' + state.qr.version +
-      '  ·  ' + state.qr.size + '×' + state.qr.size + '  ·  ecc ' + state.qr.ecl +
-      '  ·  mask ' + state.qr.mask + '  ·  ' + st.total + ' voxels (' + st.canopy +
-      ' canopy)  ·  height ' + Math.round(st.heightFraction * 100) + '% of plot' +
-      '  ·  soil ' + Palette.contrast(pal.soil, pal.paving).toFixed(1) +
-      ':1, foliage ' + Palette.contrast(pal.foliageTop, pal.paving).toFixed(1) + ':1';
+    var scan = document.getElementById('scan');
+    if (!scan) return;
+    var wrap = document.getElementById('stagewrap');
+    var png = document.getElementById('png');
+    var invalid = !!(state.empty || state.error);
+    if (wrap) wrap.classList.toggle('invalid', invalid);
+    if (png) png.disabled = invalid;
+    if (state.empty) {
+      scan.className = 'scan err';
+      scan.textContent = 'Type a link to plant it.';
+      return;
+    }
+    if (state.error) {
+      scan.className = 'scan err';
+      scan.textContent = 'Cannot encode: ' + state.error;
+      return;
+    }
+    /* Nothing to report: the diorama is the readout. */
+    scan.className = 'scan';
+    scan.textContent = '';
   }
 
   function bind() {
@@ -6531,9 +6895,14 @@ void main() {
       b.className = 'tab' + (sp.id === state.species ? ' on' : '');
       b.dataset.id = sp.id;
       b.innerHTML = '<span class="season">' + sp.season + '</span><span class="sp">' + sp.name + '</span>';
+      b.setAttribute('aria-pressed', sp.id === state.species ? 'true' : 'false');
       b.addEventListener('click', function () {
         state.species = sp.id;
-        document.querySelectorAll('.tab').forEach(function (o) { o.classList.toggle('on', o.dataset.id === sp.id); });
+        document.querySelectorAll('.tab').forEach(function (o) {
+          var on = o.dataset.id === sp.id;
+          o.classList.toggle('on', on);
+          o.setAttribute('aria-pressed', on ? 'true' : 'false');
+        });
         rebuild();
       });
       document.getElementById('tabs').appendChild(b);
@@ -6546,9 +6915,16 @@ void main() {
       b.style.background = s.hex;
       b.title = s.name + ' — ' + Palette.contrast(s.hex, Palette.PAVING).toFixed(1) + ':1 vs paving';
       b.setAttribute('aria-label', s.name);
+      b.setAttribute('aria-pressed', s.id === state.swatch ? 'true' : 'false');
       b.addEventListener('click', function () {
-        state.swatch = s.id;
-        document.querySelectorAll('.swatch').forEach(function (o) { o.classList.toggle('on', o.dataset.id === s.id); });
+        /* Clicking the active swatch returns to the species' own foliage - the
+           load state, previously unreachable after a single click. */
+        state.swatch = (state.swatch === s.id) ? null : s.id;
+        document.querySelectorAll('.swatch').forEach(function (o) {
+          var on = o.dataset.id === state.swatch;
+          o.classList.toggle('on', on);
+          o.setAttribute('aria-pressed', on ? 'true' : 'false');
+        });
         rebuild();
       });
       document.getElementById('swatches').appendChild(b);
@@ -6567,13 +6943,19 @@ void main() {
     }
     syncFlipLabel();
     renderer.domElement.addEventListener('click', toggle);
+    Render.attachStageKeys(renderer.domElement, toggle);
     document.getElementById('flip').addEventListener('click', toggle);
     document.getElementById('png').addEventListener('click', function () {
-      drawFrame(state.t, performance.now() - startTime);
+      if (state.empty || state.error) return;
+      /* Settled target, not live t: a click mid-flip used to write an oblique
+         frame that is neither a tree portrait nor a scannable code. */
+      drawFrame(state.target, performance.now() - startTime);
       var a = document.createElement('a');
-      a.download = 'qr-arboretum-3d-' + state.species + '.png';
+      var name = 'qr-arboretum-3d-' + state.species + '.png';
+      a.download = name;
       a.href = renderer.domElement.toDataURL('image/png');
       a.click();
+      confirmSave(name);
     });
     window.addEventListener('resize', resize);
   }

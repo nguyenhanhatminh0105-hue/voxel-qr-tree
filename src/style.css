@@ -1,8 +1,9 @@
 :root {
   --paving: #edeae3;
   --ink: #2a2620;
-  --muted: #7d766a;
-  --line: #d9d4c8;
+  --muted: #6b6459;       /* 4.87:1 on paving - AA for 11px body text */
+  --line: #d9d4c8;        /* decorative only: the stage frame */
+  --edge: #8b8374;        /* 3.12:1 on paving - interactive component borders (WCAG 1.4.11) */
   --panel: #f6f4ef;
   --focus: #3a4a7c;
 }
@@ -25,6 +26,11 @@ html, body {
   max-width: 1100px;
   margin: 0 auto;
   padding: 14px;
+  /* viewport-fit=cover means the page owns the notch area; claim it back */
+  padding-top: max(14px, env(safe-area-inset-top));
+  padding-right: max(14px, env(safe-area-inset-right));
+  padding-bottom: max(14px, env(safe-area-inset-bottom));
+  padding-left: max(14px, env(safe-area-inset-left));
   gap: 12px;
 }
 
@@ -38,13 +44,11 @@ h1 {
   white-space: nowrap;
 }
 
-h1 span { color: var(--muted); font-weight: 400; }
-
 #url {
   flex: 1 1 260px;
   min-width: 0;
   padding: 9px 12px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--edge);
   border-radius: 9px;
   background: #fff;
   color: inherit;
@@ -85,7 +89,7 @@ footer { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
   align-items: flex-start;
   gap: 1px;
   padding: 6px 11px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--edge);
   border-radius: 9px;
   background: var(--panel);
   color: var(--muted);
@@ -96,7 +100,9 @@ footer { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
 
 .tab .season { font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; }
 .tab .sp { font-size: 13px; font-weight: 600; color: var(--ink); }
+.tab:hover { background: #fff; border-color: var(--muted); }
 .tab.on { border-color: var(--ink); background: #fff; color: var(--ink); }
+.swatch:hover { box-shadow: 0 0 0 2px var(--muted); }
 .tab:focus-visible, .swatch:focus-visible, button:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 
 #swatches { display: flex; gap: 6px; }
@@ -105,7 +111,7 @@ footer { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
   width: 26px; height: 26px;
   border-radius: 50%;
   border: 2px solid transparent;
-  box-shadow: 0 0 0 1px var(--line);
+  box-shadow: 0 0 0 1px var(--edge);
   cursor: pointer;
   padding: 0;
 }
@@ -116,7 +122,7 @@ footer { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
 
 .actions button {
   padding: 8px 13px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--edge);
   border-radius: 9px;
   background: var(--panel);
   color: var(--ink);
@@ -127,22 +133,35 @@ footer { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
 
 .actions button:hover { background: #fff; border-color: var(--muted); }
 
-.readout {
-  flex: 1 0 100%;
-  font-size: 11px;
-  color: var(--muted);
-  font-variant-numeric: tabular-nums;
-}
+/* Short, and the only part that is an aria-live region: a screen reader should
+   hear the state change, not nine fields of build metadata on every keystroke. */
+.scan { flex: 1 0 100%; font-size: 11px; color: var(--ink); font-weight: 600; }
+.scan.err { color: #8e2f4b; }
+.scan.ok { color: #2f6b45; }
+.scan.saved { color: #2f6b45; }
+.scan:empty { display: none; }
 
-.readout.err { color: #9e3b58; font-weight: 600; }
+/* An unencodable or empty input leaves the previous scene on the stage; say so
+   visually instead of presenting a stale render as a finished result. */
+#stagewrap.invalid { opacity: 0.38; }
+.actions button[disabled] { opacity: 0.45; cursor: not-allowed; }
 
 @media (max-width: 620px) {
-  #app { padding: 10px; gap: 9px; }
+  #app {
+    padding: 10px;
+    padding-top: max(10px, env(safe-area-inset-top));
+    padding-right: max(10px, env(safe-area-inset-right));
+    padding-bottom: max(10px, env(safe-area-inset-bottom));
+    padding-left: max(10px, env(safe-area-inset-left));
+    gap: 9px;
+  }
   h1 { flex: 1 0 100%; }
   .actions { margin-left: 0; flex: 1 0 100%; }
   .actions button { flex: 1; }
-  .tab { padding: 5px 9px; }
+  .tab { padding: 9px 9px; }
   .tab .sp { font-size: 12px; }
+  #swatches { gap: 10px; }
+  .swatch { width: 36px; height: 36px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

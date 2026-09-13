@@ -309,7 +309,140 @@
     return faces.length;
   }
 
+  /* The stage carries cursor:pointer and a click handler but was tabIndex -1,
+     so the on-screen hint instructed a gesture keyboard users could not
+     perform. This gives it focus and a key path without changing the camera. */
+  function attachStageKeys(el, onTap) {
+    el.tabIndex = 0;
+    el.setAttribute('role', 'button');
+    el.setAttribute('aria-label',
+      'Voxel tree. Press Enter to flip between the tree and the scannable code.');
+    el.addEventListener('keydown', function (ev) {
+      if (ev.key === 'Enter' || ev.key === ' ') { onTap(); ev.preventDefault(); }
+    });
+  }
+
+  /* Ambient life. Both renderers read these so the two builds agree on what
+     the weather is doing; each draws it with its own primitives.
+
+     Fall is expressed as descents per second: the old 0.6-1.7 meant a petal
+     crossed the whole scene in well under two seconds, which read as rain
+     rather than drift. Winter is snow - slower, larger, and it wanders. */
+  /* kind drives the silhouette, and each one is its season: a cherry petal,
+     a winged samara, a ginkgo fan, a six-spoke flake. SPECIES already declared
+     these (petals / seeds / leaves / snow) and the renderers were drawing a
+     square for three of the four. Counts come down as the sizes go up - the
+     brief is a moderate amount of weather, not a blizzard. */
+  var WEATHER = {
+    sakura:  { kind: 'petal', fall: 0.13, spread: 0.10, size: 0.98, sway: 0.9, count: 54, snow: false },
+    oak:     { kind: 'seed',  fall: 0.17, spread: 0.12, size: 0.90, sway: 1.2, count: 46, snow: false },
+    ginkgo:  { kind: 'leaf',  fall: 0.15, spread: 0.11, size: 1.08, sway: 1.4, count: 50, snow: false },
+    willow:  { kind: 'flake', fall: 0.10, spread: 0.07, size: 1.02, sway: 1.7, count: 66, snow: true }
+  };
+  /* Snow has to read against the paving, which is itself pale and warm
+     (#edeae3). Near-white snow was invisible on it. A cool blue-grey
+     separates by temperature rather than by lightness. */
+  var SNOW_TINT = '#c3d1de';
+
+  function weatherFor(species) { return WEATHER[species] || WEATHER.sakura; }
+
+  /* One shape definition, both renderers. The canvas build calls this per
+     particle; the WebGL build paints it once into an offscreen canvas and uses
+     that as the point sprite, so the two builds cannot drift apart.
+     Draws into a box of side `s` centred on (cx, cy). The caller sets
+     fillStyle and strokeStyle. */
+  function paintFallShape(ctx, kind, cx, cy, s, rot) {
+    var r = s / 2;
+    ctx.save();
+    ctx.translate(cx, cy);
+    if (rot) ctx.rotate(rot);
+    if (kind === 'cap') {
+      // a soft mound, wider than tall: snow lying on a leaf
+      ctx.beginPath();
+      ctx.ellipse(0, 0, r * 0.98, r * 0.56, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+      return;
+    }
+    if (kind === 'flake') {
+      ctx.lineWidth = Math.max(1, s * 0.15);
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      for (var i = 0; i < 3; i++) {
+        var a = i * Math.PI / 3;
+        ctx.moveTo(-Math.cos(a) * r, -Math.sin(a) * r);
+        ctx.lineTo(Math.cos(a) * r, Math.sin(a) * r);
+      }
+      // short barbs, which is what separates a flake from an asterisk
+      for (var j = 0; j < 6; j++) {
+        var b = j * Math.PI / 3, bx = Math.cos(b) * r * 0.62, by = Math.sin(b) * r * 0.62;
+        ctx.moveTo(bx, by);
+        ctx.lineTo(bx + Math.cos(b + 0.9) * r * 0.28, by + Math.sin(b + 0.9) * r * 0.28);
+        ctx.moveTo(bx, by);
+        ctx.lineTo(bx + Math.cos(b - 0.9) * r * 0.28, by + Math.sin(b - 0.9) * r * 0.28);
+      }
+      ctx.stroke();
+    } else if (kind === 'leaf') {
+      // ginkgo: a fan, notched at the crown, on a short stalk
+      ctx.beginPath();
+      ctx.moveTo(0, r * 0.96);
+      ctx.quadraticCurveTo(-r * 0.98, r * 0.18, -r * 0.66, -r * 0.74);
+      ctx.quadraticCurveTo(-r * 0.22, -r * 0.46, 0, -r * 0.58);
+      ctx.quadraticCurveTo(r * 0.22, -r * 0.46, r * 0.66, -r * 0.74);
+      ctx.quadraticCurveTo(r * 0.98, r * 0.18, 0, r * 0.96);
+      ctx.fill();
+    } else if (kind === 'seed') {
+      // samara: a seed body with one wing, the thing that spins as it falls
+      ctx.beginPath();
+      ctx.ellipse(0, r * 0.46, r * 0.32, r * 0.27, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(0, r * 0.34);
+      ctx.quadraticCurveTo(r * 0.88, -r * 0.10, r * 0.22, -r * 0.96);
+      ctx.quadraticCurveTo(-r * 0.06, -r * 0.18, 0, r * 0.34);
+      ctx.fill();
+    } else {
+      // cherry petal: rounded, with the characteristic notch at the tip
+      ctx.beginPath();
+      ctx.moveTo(0, r * 0.92);
+      ctx.bezierCurveTo(-r * 1.0, r * 0.40, -r * 0.82, -r * 0.58, -r * 0.16, -r * 0.90);
+      ctx.quadraticCurveTo(0, -r * 0.62, r * 0.16, -r * 0.90);
+      ctx.bezierCurveTo(r * 0.82, -r * 0.58, r * 1.0, r * 0.40, 0, r * 0.92);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  /* Birds: a few crossing the sky on slow circular arcs, well above the crown
+     and outside the plot footprint, so they stay small disconnected blobs that
+     the silhouette measurement discards. Deterministic in `time` - no state,
+     so both renderers and the test harness agree frame for frame. */
+  var BIRD_COUNT = 3;
+  var BIRD_PERIOD = 26000;        // ms for a full circuit
+  var BIRD_SPAN = 0.62;           // orbit radius, as a fraction of plot width
+
+  function birdsAt(n, maxZ, time) {
+    var out = [];
+    for (var i = 0; i < BIRD_COUNT; i++) {
+      var ph = (time / BIRD_PERIOD + i / BIRD_COUNT) * Math.PI * 2;
+      var r = n * BIRD_SPAN * (0.82 + 0.18 * Math.sin(ph * 0.7 + i));
+      out.push({
+        x: n / 2 + Math.cos(ph) * r,
+        y: n / 2 + Math.sin(ph) * r * 0.72,
+        z: maxZ + n * (0.30 + 0.10 * Math.sin(ph * 1.7 + i * 2)),
+        // wing phase drives the V opening; a flat V reads as a glide
+        flap: Math.sin(time / 190 + i * 1.7),
+        dir: Math.cos(ph) >= 0 ? 1 : -1
+      });
+    }
+    return out;
+  }
+
   return {
+    attachStageKeys: attachStageKeys,
+    weatherFor: weatherFor, birdsAt: birdsAt, SNOW_TINT: SNOW_TINT,
+    paintFallShape: paintFallShape,
+    BIRD_COUNT: BIRD_COUNT,
     DEG: DEG, QUIET: QUIET, SLAB_BOTTOM: SLAB_BOTTOM, SLAB_TOP: SLAB_TOP,
     WIND_AMP: WIND_AMP, WIND_FREQ: WIND_FREQ, WIND_DIR: WIND_DIR,
     EPS_AREA: EPS_AREA,

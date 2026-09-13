@@ -28,11 +28,22 @@
 
   // --- scene ------------------------------------------------------------
   function rebuild() {
+    /* No silent fallback to DEFAULT_URL. An empty field used to render a
+       finished, exportable code for somebody else's link while the placeholder
+       implied otherwise. */
+    if (!state.text) {
+      state.error = null;
+      state.empty = true;
+      updateReadout();
+      return;
+    }
+    state.empty = false;
     try {
-      state.qr = QR.encode(state.text || DEFAULT_URL, { ecl: 'M' });
+      state.qr = QR.encode(state.text, { ecl: 'M' });
       state.error = null;
     } catch (e) {
       state.error = e.message;
+      updateReadout();
       return;
     }
     state.scene = Scene.build({
@@ -51,15 +62,19 @@
     particles = [];
     if (reduceMotion) return;
     var n = state.scene.n, maxZ = state.scene.maxZ;
+    var w = Render.weatherFor(state.species);
     var rnd = Scene.mulberry32(Scene.hashString(state.scene.id + '#p'));
-    var count = Math.round(70);
-    for (var i = 0; i < count; i++) {
+    for (var i = 0; i < w.count; i++) {
+      /* Debris stays over the plot: the weather belongs to the arboretum, not
+         to the empty air around it. */
       particles.push({
         x: rnd() * n, y: rnd() * n,
         z: rnd() * maxZ,
-        fall: 0.6 + rnd() * 1.1,
+        fall: w.fall + rnd() * w.spread,
         drift: rnd() * Math.PI * 2,
-        size: 0.16 + rnd() * 0.16,
+        size: w.size * (0.78 + rnd() * 0.48),
+        spin: rnd() * Math.PI * 2,
+        tumble: 0.5 + rnd() * 1.1,       // leaves turn as they fall
         top: maxZ
       });
     }
@@ -86,20 +101,72 @@
     if (fade <= 0 || reduceMotion) return;
     var maxZ = scene.maxZ, n = scene.n;
     var pal = scene.palette;
+    var w = Render.weatherFor(state.species);
     ctx2.save();
-    ctx2.globalAlpha = fade * 0.85;
+    ctx2.globalAlpha = fade * (w.snow ? 0.92 : 0.85);
+    ctx2.fillStyle = w.snow ? Render.SNOW_TINT : pal.foliageSide;
+    ctx2.strokeStyle = ctx2.fillStyle;
     for (var i = 0; i < particles.length; i++) {
       var p = particles[i];
       // fall and recycle; purely decorative, never touches the code
       var z = p.top - ((time * 0.001 * p.fall + p.drift) % 1) * (p.top + 1);
-      var sway = Math.sin(time * 0.0016 + p.drift) * 0.5;
+      var sway = Math.sin(time * 0.0016 + p.drift) * w.sway;
       var x = p.x + sway, y = p.y + sway * 0.4;
       if (x < 0 || y < 0 || x > n || y > n) continue;
       var sx = Render.projX(cam, x, y);
       var sy = Render.projY(cam, x, y, z);
       var s = p.size * cam.scale;
-      ctx2.fillStyle = pal.foliageSide;
-      ctx2.fillRect(sx - s / 2, sy - s / 2, s, s);
+      Render.paintFallShape(ctx2, w.kind, sx, sy, s,
+        p.spin + time * 0.00055 * p.tumble);
+    }
+    ctx2.restore();
+  }
+
+  /* Snow sitting on a winter canopy. Decorative only and faded with the
+     weather - the leaf's top face is the audited surface the code is read
+     from, so it can never actually be repainted white. */
+  function drawSnowCaps(ctx2, scene, cam, fade) {
+    if (fade <= 0 || reduceMotion) return;
+    if (!Render.weatherFor(state.species).snow || !scene.crownTops) return;
+    var caps = scene.crownTops;
+    ctx2.save();
+    ctx2.globalAlpha = fade * 0.8;
+    ctx2.fillStyle = Render.SNOW_TINT;
+    for (var i = 0; i < caps.length; i += 2) {
+      var cp = caps[i];
+      var sx = Render.projX(cam, cp.x + 0.5, cp.y + 0.5);
+      var sy = Render.projY(cam, cp.x + 0.5, cp.y + 0.5, cp.z + 0.18);
+      var sz = cam.scale;
+      ctx2.beginPath();
+      ctx2.ellipse(sx, sy, sz * 0.34, sz * 0.19, 0, 0, Math.PI * 2);
+      ctx2.fill();
+    }
+    ctx2.restore();
+  }
+
+  /* Birds ride the same fade as the weather, so the sky is empty well before
+     the matrix has to read. They stay outside the plot footprint and each one
+     is far under 1% of the diorama's area, which is the threshold the
+     silhouette measurement uses to discard things that are not the diorama. */
+  function drawBirds(ctx2, scene, cam, time, fade) {
+    if (fade <= 0 || reduceMotion) return;
+    var birds = Render.birdsAt(scene.n, scene.maxZ, time);
+    ctx2.save();
+    ctx2.globalAlpha = fade * 0.6;
+    ctx2.strokeStyle = scene.palette.soil;
+    ctx2.lineWidth = Math.max(1, 0.055 * cam.scale);
+    ctx2.lineCap = 'round';
+    for (var i = 0; i < birds.length; i++) {
+      var b = birds[i];
+      var sx = Render.projX(cam, b.x, b.y);
+      var sy = Render.projY(cam, b.x, b.y, b.z);
+      var halfSpan = 0.40 * cam.scale;
+      var lift = b.flap * 0.34 * halfSpan;
+      ctx2.beginPath();
+      ctx2.moveTo(sx - halfSpan, sy - lift);
+      ctx2.lineTo(sx, sy);
+      ctx2.lineTo(sx + halfSpan, sy - lift);
+      ctx2.stroke();
     }
     ctx2.restore();
   }
@@ -127,7 +194,10 @@
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.drawImage(ensureGround(scene, cam), 0, 0, W, H);
       Render.drawVoxels(ctx, scene, cam, time, amp);
-      drawParticles(ctx, scene, cam, time, Math.max(0, 1 - e / 0.6));
+      var ambient = Math.max(0, 1 - e / 0.6);
+      drawSnowCaps(ctx, scene, cam, ambient);
+      drawParticles(ctx, scene, cam, time, ambient);
+      drawBirds(ctx, scene, cam, time, ambient);
     }
     requestAnimationFrame(frame);
   }
@@ -147,35 +217,62 @@
 
   // --- UI ---------------------------------------------------------------
   function updateReadout() {
-    var el = document.getElementById('readout');
-    if (!el) return;
-    if (state.error) { el.textContent = state.error; el.className = 'readout err'; return; }
-    var q = state.qr;
-    var pal = state.scene.palette;
-    var ratio = Palette.contrast(pal.foliageTop, pal.paving).toFixed(1);
-    var soil = Palette.contrast(pal.soil, pal.paving).toFixed(1);
-    el.className = 'readout';
-    el.textContent = 'version ' + q.version + '  ·  ' + q.size + '×' + q.size +
-      '  ·  ecc ' + q.ecl + '  ·  mask ' + q.mask +
-      '  ·  ' + state.scene.voxels.length + ' voxels' +
-      '  ·  soil ' + soil + ':1, foliage ' + ratio + ':1 vs paving';
+    var scan = document.getElementById('scan');
+    if (!scan) return;
+    var wrap = document.getElementById('stagewrap');
+    var png = document.getElementById('png');
+    var invalid = !!(state.empty || state.error);
+    if (wrap) wrap.classList.toggle('invalid', invalid);
+    if (png) png.disabled = invalid;
+    if (state.empty) {
+      scan.className = 'scan err';
+      scan.textContent = 'Type a link to plant it.';
+      return;
+    }
+    if (state.error) {
+      scan.className = 'scan err';
+      scan.textContent = 'Cannot encode: ' + state.error;
+      return;
+    }
+    /* Nothing to report: the diorama is the readout. */
+    scan.className = 'scan';
+    scan.textContent = '';
   }
 
   function exportPNG() {
+    if (state.empty || state.error) return;
     var scale = 2;
     var off = document.createElement('canvas');
     off.width = W * scale; off.height = H * scale;
     var octx = off.getContext('2d');
     octx.setTransform(scale, 0, 0, scale, 0, 0);
-    var e = Render.easeInOutCubic(state.t);
+    /* Settled target, not live t: a click 400ms into the flip used to write
+       an oblique frame that is neither a tree portrait nor a scannable code. */
+    var e = Render.easeInOutCubic(state.target);
     var cam = Render.makeCamera(state.scene.n, state.scene.maxZ, e, W, H);
     var amp = Render.WIND_AMP * (1 - e) * (1 - e);
     Render.drawGround(octx, state.scene, cam, W, H);
     Render.drawVoxels(octx, state.scene, cam, performance.now() - startTime, amp);
     var a = document.createElement('a');
-    a.download = 'qr-arboretum-' + state.species + '.png';
+    var name = 'qr-arboretum-' + state.species + '.png';
+    a.download = name;
     a.href = off.toDataURL('image/png');
     a.click();
+    confirmSave(name);
+  }
+
+  /* The export was silent: no toast, no filename, nothing. Peak-end says the
+     last thing the visitor experiences is the download, so it should say what
+     it produced. Routed through #scan, which is the live region, so it is
+     announced rather than only shown. */
+  var saveTimer = null;
+  function confirmSave(name) {
+    var scan = document.getElementById('scan');
+    if (!scan) return;
+    clearTimeout(saveTimer);
+    scan.className = 'scan saved';
+    scan.textContent = 'Saved ' + name;
+    saveTimer = setTimeout(updateReadout, 4000);
   }
 
   function bind() {
@@ -195,9 +292,14 @@
       b.className = 'tab' + (sp.id === state.species ? ' on' : '');
       b.dataset.id = sp.id;
       b.innerHTML = '<span class="season">' + sp.season + '</span><span class="sp">' + sp.name + '</span>';
+      b.setAttribute('aria-pressed', sp.id === state.species ? 'true' : 'false');
       b.addEventListener('click', function () {
         state.species = sp.id;
-        document.querySelectorAll('.tab').forEach(function (o) { o.classList.toggle('on', o.dataset.id === sp.id); });
+        document.querySelectorAll('.tab').forEach(function (o) {
+          var on = o.dataset.id === sp.id;
+          o.classList.toggle('on', on);
+          o.setAttribute('aria-pressed', on ? 'true' : 'false');
+        });
         rebuild();
       });
       document.getElementById('tabs').appendChild(b);
@@ -210,9 +312,16 @@
       b.style.background = s.hex;
       b.title = s.name + ' — ' + Palette.contrast(s.hex, Palette.PAVING).toFixed(1) + ':1 vs paving';
       b.setAttribute('aria-label', s.name);
+      b.setAttribute('aria-pressed', s.id === state.swatch ? 'true' : 'false');
       b.addEventListener('click', function () {
-        state.swatch = s.id;
-        document.querySelectorAll('.swatch').forEach(function (o) { o.classList.toggle('on', o.dataset.id === s.id); });
+        /* Clicking the active swatch returns to the species' own foliage - the
+           load state, previously unreachable after a single click. */
+        state.swatch = (state.swatch === s.id) ? null : s.id;
+        document.querySelectorAll('.swatch').forEach(function (o) {
+          var on = o.dataset.id === state.swatch;
+          o.classList.toggle('on', on);
+          o.setAttribute('aria-pressed', on ? 'true' : 'false');
+        });
         rebuild();
       });
       document.getElementById('swatches').appendChild(b);
@@ -231,6 +340,7 @@
     }
     syncFlipLabel();
     canvas.addEventListener('click', toggle);
+    Render.attachStageKeys(canvas, toggle);
     document.getElementById('flip').addEventListener('click', toggle);
     document.getElementById('png').addEventListener('click', exportPNG);
 

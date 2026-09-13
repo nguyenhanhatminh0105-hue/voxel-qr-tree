@@ -64,7 +64,7 @@
 
   // swatch null = use the species' own foliage colour
   var state = { text: DEFAULT_URL, species: 'sakura', swatch: null, t: 0, target: 0 };
-  var renderer, scene3, camera, petals;
+  var renderer, scene3, camera, petals, birds, snowCaps;
   var meshes = [];            // [top, sideY, sideX] InstancedMesh
   var boxes = null;           // voxels plus the slab, in draw order
   var W = 0, H = 0;
@@ -92,7 +92,7 @@
      gives a sphere form without a light source that would push top faces
      brighter and through the contrast floor. */
   function withShading(g, banded) {
-    g = g.toNonIndexed();
+    if (g.index) g = g.toNonIndexed();   // Icosahedron is already non-indexed
     g.computeVertexNormals();
     var pos = g.attributes.position, nrm = g.attributes.normal;
     var col = new Float32Array(pos.count * 3);
@@ -141,8 +141,18 @@
 
   // --- scene build ------------------------------------------------------
   function rebuild() {
+    /* No silent fallback to DEFAULT_URL. An empty field used to render a
+       finished, exportable code for somebody else's link while the placeholder
+       implied otherwise. */
+    if (!state.text) {
+      state.error = null;
+      state.empty = true;
+      updateReadout();
+      return;
+    }
+    state.empty = false;
     try {
-      state.qr = QR.encode(state.text || DEFAULT_URL, { ecl: 'M' });
+      state.qr = QR.encode(state.text, { ecl: 'M' });
       state.error = null;
     } catch (e) {
       state.error = e.message;
@@ -202,15 +212,27 @@
   }
 
   function buildPetals() {
-    if (petals) { scene3.remove(petals); petals.geometry.dispose(); petals.material.dispose(); petals = null; }
+    if (petals) {
+      scene3.remove(petals); petals.geometry.dispose();
+      if (petals.material.map) petals.material.map.dispose();
+      petals.material.dispose(); petals = null;
+    }
+    if (birds) { scene3.remove(birds); birds.geometry.dispose(); birds.material.dispose(); birds = null; }
+    if (snowCaps) {
+      scene3.remove(snowCaps); snowCaps.geometry.dispose();
+      if (snowCaps.material.map) snowCaps.material.map.dispose();
+      snowCaps.material.dispose(); snowCaps = null;
+    }
     if (reduceMotion) return;
     var n = state.scene.n, maxZ = state.scene.maxZ;
+    var wx = Render.weatherFor(state.species);
     var rnd = Scene.mulberry32(Scene.hashString(state.scene.id + '#p'));
-    var count = 90;
+    var count = wx.count;
     var pos = new Float32Array(count * 3);
     var meta = [];
     for (var i = 0; i < count; i++) {
-      meta.push({ x: rnd() * n, y: rnd() * n, fall: 0.6 + rnd() * 1.1,
+      // debris stays over the plot - the weather belongs to the arboretum
+      meta.push({ x: rnd() * n, y: rnd() * n, fall: wx.fall + rnd() * wx.spread,
                   drift: rnd() * 6.283, top: maxZ });
       pos[i * 3] = meta[i].x;
       pos[i * 3 + 1] = -meta[i].y;               // three-space Y
@@ -218,10 +240,18 @@
     }
     var g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    /* The sprite is the same shape the canvas build draws, painted once into
+       an offscreen canvas - one definition, so the two builds cannot drift. */
     petals = new THREE.Points(g, new THREE.PointsMaterial({
-      color: new THREE.Color(state.scene.palette.mat.leaf.sideA),
-      size: 0.42, sizeAttenuation: true, transparent: true
+      map: fallSprite(wx.kind, wx.snow ? Render.SNOW_TINT : state.scene.palette.mat.leaf.sideA),
+      /* The camera is orthographic, where sizeAttenuation derives point size
+         from perspective distance and collapses these to nothing. Size is set
+         in pixels each frame from the camera scale instead, so a flake stays
+         a fixed number of modules wide however the plot is framed. */
+      size: 8, sizeAttenuation: false, transparent: true,
+      alphaTest: 0.12, depthWrite: false
     }));
+    petals.userData.weather = wx;
     petals.userData.meta = meta;
     petals.frustumCulled = false;
     scene3.add(petals);
@@ -340,6 +370,8 @@
     var amp = reduceMotion ? 0 : WIND_AMP * (1 - e) * (1 - e);
     applyWind(clock, amp);
     if (petals) {
+      var pw = petals.userData.weather || { size: 1 };
+      petals.material.size = Math.max(3, pw.size * geom.scale);
       var fade = Math.max(0, 1 - e / 0.6);
       petals.visible = fade > 0;
       petals.material.opacity = fade * 0.9;
@@ -347,12 +379,95 @@
       for (var i = 0; i < meta.length; i++) {
         var m = meta[i];
         p.array[i * 3 + 2] = m.top - ((clock * 0.001 * m.fall + m.drift) % 1) * (m.top + 1);
-        p.array[i * 3] = m.x + Math.sin(clock * 0.0016 + m.drift) * 0.5;
+        var swayAmp = (petals.userData.weather || { sway: 0.9 }).sway;
+        p.array[i * 3] = m.x + Math.sin(clock * 0.0016 + m.drift) * swayAmp;
       }
       p.needsUpdate = true;
     }
+    var ambient = Math.max(0, 1 - e / 0.6);
+    ensureSnowCaps();
+    if (snowCaps) {
+      snowCaps.visible = ambient > 0;
+      snowCaps.material.opacity = ambient * 0.8;
+      snowCaps.material.size = Math.max(4, 0.68 * geom.scale);
+    }
+    updateBirds(clock, ambient);
     renderer.render(scene3, camera);
     return geom;
+  }
+
+  /* Birds as open V line segments - two strokes per bird, so they read as
+     birds rather than dots at this scale. They share the weather's fade, so
+     the sky is empty long before the matrix has to read. */
+  /* Snow on a winter canopy. Decorative and faded with the weather: the leaf's
+     top face is the audited surface the code is read from, so it can never be
+     repainted white without lifting dark modules toward light. */
+  function ensureSnowCaps() {
+    if (snowCaps || !state.scene || reduceMotion) return;
+    if (!Render.weatherFor(state.species).snow || !state.scene.crownTops) return;
+    var caps = state.scene.crownTops;
+    var pos = new Float32Array(Math.ceil(caps.length / 2) * 3), w = 0;
+    for (var i = 0; i < caps.length; i += 2) {
+      pos[w * 3] = caps[i].x + 0.5;
+      pos[w * 3 + 1] = -(caps[i].y + 0.5);
+      pos[w * 3 + 2] = caps[i].z + 0.18;
+      w++;
+    }
+    var g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(pos.subarray(0, w * 3), 3));
+    snowCaps = new THREE.Points(g, new THREE.PointsMaterial({
+      map: fallSprite('cap', Render.SNOW_TINT),
+      size: 10, sizeAttenuation: false, transparent: true,
+      alphaTest: 0.10, depthWrite: false
+    }));
+    snowCaps.frustumCulled = false;
+    scene3.add(snowCaps);
+  }
+
+  function fallSprite(kind, colour) {
+    var c = document.createElement('canvas');
+    c.width = c.height = 64;
+    var g2 = c.getContext('2d');
+    g2.fillStyle = colour;
+    g2.strokeStyle = colour;
+    Render.paintFallShape(g2, kind, 32, 32, 58, 0);
+    var tex = new THREE.CanvasTexture(c);
+    tex.needsUpdate = true;
+    return tex;
+  }
+
+  function ensureBirds() {
+    if (birds || !state.scene || reduceMotion) return;
+    var g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(
+      new Float32Array(Render.BIRD_COUNT * 4 * 3), 3));
+    birds = new THREE.LineSegments(g, new THREE.LineBasicMaterial({
+      color: new THREE.Color(state.scene.palette.soil), transparent: true
+    }));
+    birds.frustumCulled = false;
+    scene3.add(birds);
+  }
+
+  function updateBirds(clock, fade) {
+    if (reduceMotion) return;
+    ensureBirds();
+    if (!birds) return;
+    birds.visible = fade > 0;
+    birds.material.opacity = fade * 0.6;
+    if (fade <= 0) return;
+    var list = Render.birdsAt(state.scene.n, state.scene.maxZ, clock);
+    var a = birds.geometry.attributes.position.array;
+    var span = state.scene.n * 0.035;
+    for (var i = 0; i < list.length; i++) {
+      var b = list[i], o = i * 12, lift = b.flap * 0.42 * span;
+      // left stroke: wingtip -> body
+      a[o] = b.x - span;      a[o + 1] = -b.y; a[o + 2] = b.z + lift;
+      a[o + 3] = b.x;         a[o + 4] = -b.y; a[o + 5] = b.z;
+      // right stroke: body -> wingtip
+      a[o + 6] = b.x;         a[o + 7] = -b.y; a[o + 8] = b.z;
+      a[o + 9] = b.x + span;  a[o + 10] = -b.y; a[o + 11] = b.z + lift;
+    }
+    birds.geometry.attributes.position.needsUpdate = true;
   }
 
   function frame() {
@@ -377,18 +492,39 @@
     renderer.setSize(W, H, true);
   }
 
+  /* The export was silent. Routed through #scan so it is announced, not just
+     shown - the download is the last thing the visitor experiences. */
+  var saveTimer = null;
+  function confirmSave(name) {
+    var scan = document.getElementById('scan');
+    if (!scan) return;
+    clearTimeout(saveTimer);
+    scan.className = 'scan saved';
+    scan.textContent = 'Saved ' + name;
+    saveTimer = setTimeout(updateReadout, 4000);
+  }
+
   function updateReadout() {
-    var el = document.getElementById('readout');
-    if (!el) return;
-    if (state.error) { el.textContent = state.error; el.className = 'readout err'; return; }
-    var pal = state.scene.palette, st = state.scene.stats;
-    el.className = 'readout';
-    el.textContent = 'three.js r' + THREE.REVISION + '  ·  version ' + state.qr.version +
-      '  ·  ' + state.qr.size + '×' + state.qr.size + '  ·  ecc ' + state.qr.ecl +
-      '  ·  mask ' + state.qr.mask + '  ·  ' + st.total + ' voxels (' + st.canopy +
-      ' canopy)  ·  height ' + Math.round(st.heightFraction * 100) + '% of plot' +
-      '  ·  soil ' + Palette.contrast(pal.soil, pal.paving).toFixed(1) +
-      ':1, foliage ' + Palette.contrast(pal.foliageTop, pal.paving).toFixed(1) + ':1';
+    var scan = document.getElementById('scan');
+    if (!scan) return;
+    var wrap = document.getElementById('stagewrap');
+    var png = document.getElementById('png');
+    var invalid = !!(state.empty || state.error);
+    if (wrap) wrap.classList.toggle('invalid', invalid);
+    if (png) png.disabled = invalid;
+    if (state.empty) {
+      scan.className = 'scan err';
+      scan.textContent = 'Type a link to plant it.';
+      return;
+    }
+    if (state.error) {
+      scan.className = 'scan err';
+      scan.textContent = 'Cannot encode: ' + state.error;
+      return;
+    }
+    /* Nothing to report: the diorama is the readout. */
+    scan.className = 'scan';
+    scan.textContent = '';
   }
 
   function bind() {
@@ -405,9 +541,14 @@
       b.className = 'tab' + (sp.id === state.species ? ' on' : '');
       b.dataset.id = sp.id;
       b.innerHTML = '<span class="season">' + sp.season + '</span><span class="sp">' + sp.name + '</span>';
+      b.setAttribute('aria-pressed', sp.id === state.species ? 'true' : 'false');
       b.addEventListener('click', function () {
         state.species = sp.id;
-        document.querySelectorAll('.tab').forEach(function (o) { o.classList.toggle('on', o.dataset.id === sp.id); });
+        document.querySelectorAll('.tab').forEach(function (o) {
+          var on = o.dataset.id === sp.id;
+          o.classList.toggle('on', on);
+          o.setAttribute('aria-pressed', on ? 'true' : 'false');
+        });
         rebuild();
       });
       document.getElementById('tabs').appendChild(b);
@@ -420,9 +561,16 @@
       b.style.background = s.hex;
       b.title = s.name + ' — ' + Palette.contrast(s.hex, Palette.PAVING).toFixed(1) + ':1 vs paving';
       b.setAttribute('aria-label', s.name);
+      b.setAttribute('aria-pressed', s.id === state.swatch ? 'true' : 'false');
       b.addEventListener('click', function () {
-        state.swatch = s.id;
-        document.querySelectorAll('.swatch').forEach(function (o) { o.classList.toggle('on', o.dataset.id === s.id); });
+        /* Clicking the active swatch returns to the species' own foliage - the
+           load state, previously unreachable after a single click. */
+        state.swatch = (state.swatch === s.id) ? null : s.id;
+        document.querySelectorAll('.swatch').forEach(function (o) {
+          var on = o.dataset.id === state.swatch;
+          o.classList.toggle('on', on);
+          o.setAttribute('aria-pressed', on ? 'true' : 'false');
+        });
         rebuild();
       });
       document.getElementById('swatches').appendChild(b);
@@ -441,13 +589,19 @@
     }
     syncFlipLabel();
     renderer.domElement.addEventListener('click', toggle);
+    Render.attachStageKeys(renderer.domElement, toggle);
     document.getElementById('flip').addEventListener('click', toggle);
     document.getElementById('png').addEventListener('click', function () {
-      drawFrame(state.t, performance.now() - startTime);
+      if (state.empty || state.error) return;
+      /* Settled target, not live t: a click mid-flip used to write an oblique
+         frame that is neither a tree portrait nor a scannable code. */
+      drawFrame(state.target, performance.now() - startTime);
       var a = document.createElement('a');
-      a.download = 'qr-arboretum-3d-' + state.species + '.png';
+      var name = 'qr-arboretum-3d-' + state.species + '.png';
+      a.download = name;
       a.href = renderer.domElement.toDataURL('image/png');
       a.click();
+      confirmSave(name);
     });
     window.addEventListener('resize', resize);
   }

@@ -114,7 +114,7 @@
      interior columns keep a proportional body rather than a thin lid, which is
      what stopped the crown reading as a hanging curtain. Capped so very large
      codes stay affordable. */
-  var SHELL_MIN = 3.5, SHELL_FRAC = 0.62, SHELL_MAX = 7.5;
+  var SHELL_MIN = 4.2, SHELL_FRAC = 0.70, SHELL_MAX = 9.0;
   /* The crown needs an underside too. Filling only downward from the top left
      each column a cap on a much longer span - a hollow dome with nothing
      beneath it, which is why the crown looked unmoored from the plot.
@@ -130,7 +130,7 @@
 
      This ratio is also the cheapest lever on voxel count: you see far less of
      the underside than the top, so thinning it costs little visually. */
-  var SHELL_LOWER = 0.45;
+  var SHELL_LOWER = 0.58;
 
   var SPECIES = [
     { id: 'sakura', season: 'Spring', name: 'Sakura', fall: 'petals' },
@@ -282,6 +282,24 @@
     }
   };
 
+  /* A cluster of small clouds rather than one big ellipsoid. One cloud reads
+     as a ball; several overlapping at jittered offsets read as foliage. The
+     core is drawn first and is deliberately large enough to keep the interior
+     continuous - canopy only materialises over dark modules, so a lobe pushed
+     out on its own can land over a light region and leave a bite out of the
+     crown. The core is what stops that. */
+  Ctx.prototype.clump = function (cx, cy, cz, r, halfH, count, lowBound) {
+    var rnd = this.rnd;
+    this.cloud(cx, cy, cz, r * 0.80, halfH * 0.94, lowBound);
+    for (var i = 0; i < count; i++) {
+      var a = rnd() * Math.PI * 2;
+      var d = r * (0.26 + rnd() * 0.40);
+      this.cloud(cx + Math.cos(a) * d, cy + Math.sin(a) * d,
+                 cz + halfH * (rnd() - 0.5) * 0.70,
+                 r * (0.40 + rnd() * 0.26), halfH * (0.54 + rnd() * 0.32), lowBound);
+    }
+  };
+
   Ctx.prototype.dome = function (cx, cy, cz, r, halfH) {
     this.cloud(cx, cy, cz, r, halfH, 0);
   };
@@ -415,8 +433,15 @@
          their whole footprint, visible now that they are rounded. Down at the
          crown's underside the whole canopy is above it, and at 35 degrees of
          elevation the crown hides its own underside. */
+      /* Back at mid-crown. It was pushed down to the underside because a
+         full-module plate stuck out past the rounded leaves on thin rim
+         columns - but that was measured against leaves of 0.48-0.74 at
+         pack 0.95. Foliage is now 0.55-0.82 at pack 0.84, dense enough to
+         swallow it, and at the underside the overhang read as a flat shelf
+         protruding below the crown's lower rim. */
+      var mid = cz[0] + (cz[1] - cz[0]) * 0.42;
       this.out.push({
-        x: mx, y: my, z: cz[0] + 0.10,
+        x: mx, y: my, z: mid,
         w: 1, d: 1, h: 0.12,
         top: deep.top, side: deep.sideA, sideA: deep.sideA, sideB: deep.sideB,
         kind: 'leaf', shape: 'plate', leanX: 0, leanY: 0,
@@ -573,14 +598,26 @@
     var trunkH = n * 0.26;
     var R = n * 0.350;                       // the reference tree; the anchor
     c.trunk(cx, cy, 0, trunkH, 0.62);
-    c.cloud(cx + 0.5, cy + 0.5, trunkH + n * 0.32, R, n * 0.34);
-    for (var i = 0; i < 4; i++) {
-      var a = (i / 4) * Math.PI * 2 + rnd() * 0.5;
-      c.cloud(cx + 0.5 + Math.cos(a) * R * 0.55,
-              cy + 0.5 + Math.sin(a) * R * 0.55,
-              trunkH + n * (0.24 + rnd() * 0.12), R * 0.66, n * 0.17);
+
+    /* A cherry is TIERED, not spherical: broad horizontal shelves of blossom
+       with the limbs showing between them. The previous crown was one cloud of
+       radius R with four satellites at 0.55R and radius 0.66R - they sat
+       entirely inside the parent, so the union was a smooth ellipsoid and read
+       as a ball. Satellites now ride at 0.78R and are smaller than the gap
+       they leave, so the outline is lobed and the sky comes through. */
+    var LOBES = 7;
+    // core: continuous, so the crown never shows a bite
+    c.clump(cx + 0.5, cy + 0.5, trunkH + n * 0.33, R * 0.88, n * 0.24, 6);
+    for (var i = 0; i < LOBES; i++) {
+      var a = (i / LOBES) * Math.PI * 2 + rnd() * 0.45;
+      var lift = (i % 2) ? 0.05 : 0.0;       // alternate heights = tiered outline
+      c.clump(cx + 0.5 + Math.cos(a) * R * 0.60,
+              cy + 0.5 + Math.sin(a) * R * 0.60,
+              trunkH + n * (0.25 + lift), R * 0.40, n * 0.135, 3);
+      // a limb out to each lobe, so the branching reads in the gaps
+      c.limb(cx + 0.5, cy + 0.5, a, R * 0.72, trunkH * 0.92, n * 0.045, 0.34);
     }
-    c.cloud(cx + 0.5, cy + 0.5, trunkH + n * 0.70, R * 0.54, n * 0.185);
+    c.clump(cx + 0.5, cy + 0.5, trunkH + n * 0.62, R * 0.46, n * 0.155, 4);
   }
 
   /* Summer. Thick trunk, heavy forking limbs, deep rounded crown - taller and
@@ -598,14 +635,21 @@
       c.limb(cx + 0.5, cy + 0.5, (i / limbs) * Math.PI * 2 + rnd() * 0.6,
         R * (0.5 + rnd() * 0.4), trunkH * 0.66, n * 0.10, 0.48);
     }
-    c.cloud(cx + 0.5, cy + 0.5, trunkH + n * 0.36, R, n * 0.34);
-    for (var j = 0; j < 4; j++) {
-      var a = (j / 4) * Math.PI * 2 + rnd() * 0.7;
-      c.cloud(cx + 0.5 + Math.cos(a) * R * 0.52,
-              cy + 0.5 + Math.sin(a) * R * 0.52,
-              trunkH + n * (0.31 + rnd() * 0.14), R * 0.60, n * 0.24);
+    /* An oak crown is a cluster of heavy masses, not one dome. The lobes are
+       deliberately uneven in radius and height - an oak is the lumpiest
+       silhouette of the four and that irregularity is the species read. */
+    c.clump(cx + 0.5, cy + 0.5, trunkH + n * 0.34, R * 0.82, n * 0.27, 7);
+    var OLOBES = 7;
+    for (var j = 0; j < OLOBES; j++) {
+      var a = (j / OLOBES) * Math.PI * 2 + rnd() * 0.6;
+      var far = 0.52 + rnd() * 0.18;             // uneven reach, but overlapping
+      var rr = R * (0.36 + rnd() * 0.16);        // uneven mass
+      c.clump(cx + 0.5 + Math.cos(a) * R * far,
+              cy + 0.5 + Math.sin(a) * R * far,
+              trunkH + n * (0.26 + rnd() * 0.20), rr, n * (0.17 + rnd() * 0.09), 3);
+      c.limb(cx + 0.5, cy + 0.5, a, R * (far + 0.16), trunkH * 0.80, n * 0.085, 0.40);
     }
-    c.cloud(cx + 0.5, cy + 0.5, trunkH + n * 0.70, R * 0.45, n * 0.205);
+    c.clump(cx + 0.5, cy + 0.5, trunkH + n * 0.66, R * 0.42, n * 0.19, 4);
   }
 
   /* Autumn ginkgo. Columnar and distinctly taller than wide - it holds the far
@@ -637,16 +681,23 @@
        crown rather than the pole, or it is a lollipop again. Clump count scales
        with it so the axis keeps the same ~0.048n spacing and does not thin. */
     var crownH = n * 0.70;
-    var clumps = 15 + Math.floor(rnd() * 4);
+    var clumps = 19 + Math.floor(rnd() * 4);
     for (var i = 0; i < clumps; i++) {
       var u = i / (clumps - 1);          // 0 at the crown base, 1 at the apex
       var taper = 1 - 0.62 * u * u;
       var a = rnd() * Math.PI * 2;
-      var rad = (0.03 + rnd() * 0.17) * n * taper;
-      c.cloud(cx + 0.5 + Math.cos(a) * rad,
+      /* A ginkgo is a FAN: narrow at the bole and widening toward the top,
+         the opposite of a conifer. Radius grows with u before the apex taper
+         pulls it back, which is what separates it from a column of blobs. */
+      var flare = 0.55 + 0.85 * u;
+      var rad = (0.03 + rnd() * 0.17) * n * taper * flare;
+      /* Radius and sub-count both up: on a narrow axis, consecutive clumps
+         were not overlapping, and a gap on a columnar crown reads as a bite
+         taken out of the tree rather than as foliage texture. */
+      c.clump(cx + 0.5 + Math.cos(a) * rad,
               cy + 0.5 + Math.sin(a) * rad,
               trunkH + n * 0.02 + u * crownH,
-              n * (0.150 - 0.055 * u), n * (0.150 - 0.030 * u));
+              n * (0.205 - 0.060 * u), n * (0.160 - 0.030 * u), 3);
     }
     // The apex clump sits on the trunk column, which is dark by construction.
     c.cloud(cx + 0.5, cy + 0.5, trunkH + n * 0.02 + crownH, n * 0.085, n * 0.120);
@@ -664,21 +715,25 @@
   function plantWillow(c, n, cx, cy) {
     var rnd = c.rnd;
     var trunkH = n * 0.30;
-    var R = n * 0.462;                       // broad and low
-    var domeZ = trunkH + n * 0.24;   // low dome
+    var R = n * 0.468;                       // broad and low, but not a ball
+    var domeZ = trunkH + n * 0.215;  // low dome: willow anchors the low end
+                                     // of the four-species silhouette spread
     c.trunk(cx, cy, 0, trunkH, 0.66);
     // flat-bottomed rather than a true dome: -0.75 keeps the underside high
     // enough to leave the trunk visible while still reading as a canopy.
-    c.cloud(cx + 0.5, cy + 0.5, domeZ, R, n * 0.30, -0.75);
+    // -0.75 keeps the underside high enough to leave the trunk visible
+    c.clump(cx + 0.5, cy + 0.5, domeZ, R * 1.02, n * 0.235, 8, -0.75);
 
     var strands = Math.round(n * 1.4);
     for (var t = 0; t < strands; t++) {
       var a = rnd() * Math.PI * 2;
-      var r = R * (0.60 + rnd() * 0.42);
+      /* Strands hang from the rim rather than the whole underside, and fall
+         further: a willow is read by the curtain, not by the dome. */
+      var r = R * (0.72 + rnd() * 0.34);
       var top = domeZ - n * 0.02;
       c.tendril(Math.floor(cx + 0.5 + Math.cos(a) * r),
                 Math.floor(cy + 0.5 + Math.sin(a) * r),
-                top, Math.max(1.0, top - (0.02 + rnd() * 0.07) * n));
+                top, Math.max(1.0, top - (0.05 + rnd() * 0.11) * n));
     }
   }
 
@@ -705,7 +760,10 @@
     if (!planter) throw new Error('unknown species: ' + opts.species);
     planter(c, n, centre[0], centre[1]);
     // One pass over the merged spans, after every cloud has been recorded.
-    c.growCanopy(0.95, 0.48, 0.74);
+    /* pack 0.95 -> 0.84 overlaps each leaf further onto the one below, and
+       bigger leaves close the gaps between columns: the crown reads as
+       foliage rather than as a scatter with the plot showing through. */
+    c.growCanopy(0.84, 0.55, 0.82);
     c.backingPlates();
     var canopy = c.out.length;
     c.groundBlocks();
@@ -749,8 +807,23 @@
     var crownH = isFinite(c.crownTop) ? c.crownTop - c.crownBottom : 0;
     var groundTop = SLAB_TOP + 0.82;
 
+    var crownTops = [];
+    var ckeys = Object.keys(c.crownZ);
+    for (var ci = 0; ci < ckeys.length; ci++) {
+      var ck = Number(ckeys[ci]);
+      var czz = c.crownZ[ck];
+      if (!czz || !isFinite(czz[1])) continue;
+      crownTops.push({ x: ck % n, y: (ck - (ck % n)) / n, z: czz[1] });
+    }
+
     return {
       matrix: matrix, n: n, palette: pal, voxels: c.out, maxZ: maxZ,
+      /* Top of each crown column. Used to sit snow on a winter canopy as a
+         decorative layer: the audited TOP FACE of a leaf is the surface the
+         code is read from, so tinting it white would lift dark modules toward
+         light and break scanning. Caps are drawn over it and faded out with
+         the weather, long before the plan view. */
+      crownTops: crownTops,
       centre: centre, species: opts.species,
       stats: {
         total: c.out.length,

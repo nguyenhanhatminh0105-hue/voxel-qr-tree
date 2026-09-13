@@ -12,7 +12,7 @@
 <body>
 <div id="app">
   <header>
-    <h1>QR Arboretum <span>— a URL, grown · WebGL</span></h1>
+    <h1>QR Arboretum</h1>
     <input id="url" type="url" spellcheck="false" autocomplete="off"
            placeholder="https://example.com" aria-label="URL to encode">
   </header>
@@ -28,7 +28,10 @@
       <button id="flip" type="button">Flip to code</button>
       <button id="png" type="button">PNG</button>
     </div>
-    <div id="readout" class="readout"></div>
+    <!-- Kept, but empty unless there is something to say: an encode
+         error, the empty-input prompt, or a save confirmation. .scan:empty
+         collapses it, so nothing shows in the normal case. -->
+    <div id="scan" class="scan" aria-live="polite"></div>
   </footer>
 </div>
 
