@@ -26,7 +26,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 CORPUS = [
     "https://example.com",
     "https://github.com/nguyenhanhatminh0105-hue/qr-arboretum",
-    "https://example.net/code",
+    "https://example.org/qr",
     "a",
     "HELLO WORLD 12345",
     "https://en.wikipedia.org/wiki/Reed%E2%80%93Solomon_error_correction",

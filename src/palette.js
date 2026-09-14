@@ -143,8 +143,24 @@
      Soil and grass also sit close to each other in weight. Two ground tones of
      clearly different lightness make the floor read as a busy checkerboard;
      near-equal luminance lets it read as one surface with variation in it. */
-  var SOIL = '#8d826e';        // warm stone, 3.15:1
-  var GRASS = '#698d57';       // 3.15:1
+  /* Ground surfaces carry a night variant. Hue is free for a QR code -
+     scanners threshold on LUMINANCE, which is why every surface here is
+     measured with contrast() against PAVING rather than by eye. What is not
+     free is polarity: dark modules on a light ground is what a scanner
+     assumes, so the paving never moves and these stay above SOLID_MIN.
+
+     Foliage deliberately does NOT get a night variant. Sakura pink, ginkgo
+     gold and willow teal are the species identity; a night sakura that is not
+     pink has stopped being a sakura. The ground is scenery, so it can cool to
+     moonlight without touching what the tree is. */
+  var SOIL_DAY = '#8d826e';    // warm stone, 3.15:1
+  var SOIL_NIGHT = '#7c7f8e';  // cool stone,  3.31:1
+  var GRASS_DAY = '#698d57';   // 3.15:1
+  var GRASS_NIGHT = '#4f7d6b'; // moonlit green, 3.90:1
+  var NIGHT = false;
+  function setNight(on) { NIGHT = !!on; }
+  function SOIL_() { return NIGHT ? SOIL_NIGHT : SOIL_DAY; }
+  function GRASS_() { return NIGHT ? GRASS_NIGHT : GRASS_DAY; }
   var SLAB_SIDE = '#6E6152';  // never seen from overhead
 
   /* Six foliage swatches, each sitting just above MIN_RATIO rather than well
@@ -253,12 +269,12 @@
 
     var pal = {
       paving: PAVING,
-      soil: gate('soil', SOIL, SOLID_MIN),
+      soil: gate('soil', SOIL_(), SOLID_MIN),
       slabSide: SLAB_SIDE,
       foliageTop: gate('foliage', foliage),
       barkTop: gate('bark', sp.barkTop, SOLID_MIN),
       barkSide: sp.barkSide,          // side face: exempt from the floor
-      grassTop: gate('grass', GRASS, SOLID_MIN),
+      grassTop: gate('grass', GRASS_(), SOLID_MIN),
       swatch: swatch,
       forced: forced
     };
@@ -348,8 +364,8 @@
       });
     }
     add('paving (reference)', PAVING, true);
-    add('soil', SOIL, false, SOLID_MIN);
-    add('grass', GRASS, false, SOLID_MIN);
+    add('soil', SOIL_(), false, SOLID_MIN);
+    add('grass', GRASS_(), false, SOLID_MIN);
     SWATCHES.forEach(function (s) {
       add('foliage ' + s.name, s.hex);
       rows.push({
@@ -400,7 +416,8 @@
     TONE_FLOOR: TONE_FLOOR,
     ladderMeanRatio: ladderMeanRatio,
     PAVING: PAVING,
-    SOIL: SOIL,
+    SOIL: SOIL_DAY,
+    setNight: setNight,
     SWATCHES: SWATCHES,
     SPECIES_COLOURS: SPECIES_COLOURS,
     luminance: luminance,

@@ -33,7 +33,7 @@ CORPUS = [
     "HELLO WORLD",
     "a",
     "",
-    "https://example.net/code",
+    "https://example.org/qr",
     "https://en.wikipedia.org/wiki/Reed%E2%80%93Solomon_error_correction",
     "x" * 40,
     "x" * 100,

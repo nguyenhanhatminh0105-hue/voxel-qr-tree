@@ -40,7 +40,7 @@ from camera import simulate
 LINKS = [
     "https://github.com/nguyenhanhatminh0105-hue",
     "https://example.com",
-    "https://example.net/code",
+    "https://example.org/qr",
     "https://en.wikipedia.org/wiki/Quick_Response_code",
     "https://maps.example.org/?q=voxel+arboretum&z=14",
     "a",

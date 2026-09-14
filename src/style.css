@@ -1,18 +1,66 @@
 :root {
+  /* --paving is the PLOT colour and is load-bearing: it is the QR quiet zone,
+     measured at ~234/255 luminance, and the renderer clears to the same value
+     from Palette.PAVING. It never changes with the theme - a dark quiet zone
+     is an unscannable one. --page is the chrome behind it, and that is what
+     the theme moves. */
   --paving: #edeae3;
+  --page: #edeae3;
   --ink: #2a2620;
-  --muted: #7d766a;
-  --line: #d9d4c8;
-  --panel: #f6f4ef;
+  --muted: #6b6459;       /* 4.87:1 on paving - AA for 11px body text */
+  --line: #d9d4c8;        /* decorative only: the stage frame */
+  --edge: #8b8374;        /* 3.12:1 on page - interactive borders (WCAG 1.4.11) */
+  --panel: #f6f4ef;       /* control fill */
+  --raise: #ffffff;       /* control fill, hovered or selected */
+  --field: #ffffff;       /* the text input */
   --focus: #3a4a7c;
+  --err: #8e2f4b;
+  --good: #2f6b45;
+  --select: #dcd6c7;
+}
+
+/* The visitor's environment decides, not the category. Only the chrome moves:
+   the plot keeps its measured paving so the code stays scannable, which turns
+   the stage into a lit panel on a dark ground. */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --page: #17150f;
+    --ink: #efeade;       /* 15.20:1 on page */
+    --muted: #a8a08d;     /* 7.02:1 on page - AA at 11px */
+    --line: #2f2b23;
+    --edge: #7b7260;      /* 3.84:1 on page, 3.38:1 on panel */
+    --panel: #24211a;
+    --raise: #2e2a22;
+    --field: #1d1a14;
+    --focus: #93a8e8;     /* 7.83:1 on page */
+    --err: #ff9db5;       /* 9.34:1 on page */
+    --good: #86d6a4;      /* 10.58:1 on page */
+    --select: #3b3527;
+  }
 }
 
 * { box-sizing: border-box; }
 
+/* The surfaces nobody draws still ship with the page: selection, the caret,
+   the scrollbar, and every UA widget. Left at defaults they belong to no
+   design system, and on a dark-mode OS they render dark against a light page. */
+html {
+  /* Both, so UA widgets follow the visitor's setting. A base `light` with a
+     `dark` override in the media query loses on source order - the base rule
+     is written later in this file and simply wins. */
+  color-scheme: light dark;
+  accent-color: var(--focus);
+  scrollbar-color: var(--edge) var(--page);
+  scrollbar-width: thin;
+}
+
+::selection { background: var(--select); color: var(--ink); }
+::-moz-selection { background: var(--select); color: var(--ink); }
+
 html, body {
   margin: 0;
   height: 100%;
-  background: var(--paving);
+  background: var(--page);
   color: var(--ink);
   font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   -webkit-text-size-adjust: 100%;
@@ -25,31 +73,39 @@ html, body {
   max-width: 1100px;
   margin: 0 auto;
   padding: 14px;
+  /* viewport-fit=cover means the page owns the notch area; claim it back */
+  padding-top: max(14px, env(safe-area-inset-top));
+  padding-right: max(14px, env(safe-area-inset-right));
+  padding-bottom: max(14px, env(safe-area-inset-bottom));
+  padding-left: max(14px, env(safe-area-inset-left));
   gap: 12px;
 }
 
 header { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 
 h1 {
-  font-size: 15px;
-  font-weight: 650;
-  letter-spacing: -0.01em;
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
   margin: 0 8px 0 0;
   white-space: nowrap;
 }
-
-h1 span { color: var(--muted); font-weight: 400; }
 
 #url {
   flex: 1 1 260px;
   min-width: 0;
   padding: 9px 12px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--edge);
   border-radius: 9px;
-  background: #fff;
+  background: var(--field);
   color: inherit;
   font: inherit;
+  caret-color: var(--focus);
 }
+
+/* Browser default placeholders sit far under 4.5:1. opacity:1 because Firefox
+   applies its own on top of the colour. */
+#url::placeholder { color: var(--muted); opacity: 1; }
 
 #url:focus { outline: 2px solid var(--focus); outline-offset: 1px; border-color: transparent; }
 
@@ -64,18 +120,23 @@ h1 span { color: var(--muted); font-weight: 400; }
 
 #stage { display: block; cursor: pointer; touch-action: manipulation; }
 
+/* Inside the stage, which stays light in both themes, so this pill keeps the
+   light-theme values rather than following --muted into an unreadable pale
+   text on a pale pill. */
 .hint {
   position: absolute;
   left: 12px; bottom: 10px;
   font-size: 11px;
-  color: var(--muted);
+  color: #6b6459;
   background: rgba(246, 244, 239, 0.82);
   padding: 3px 8px;
   border-radius: 999px;
   pointer-events: none;
 }
 
-footer { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
+/* Groups stay tight internally (4-6px) and separate generously, so the
+   footer reads as three controls rather than twelve of equal weight. */
+footer { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 24px; }
 
 #tabs { display: flex; gap: 4px; flex-wrap: wrap; }
 
@@ -85,7 +146,7 @@ footer { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
   align-items: flex-start;
   gap: 1px;
   padding: 6px 11px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--edge);
   border-radius: 9px;
   background: var(--panel);
   color: var(--muted);
@@ -96,7 +157,11 @@ footer { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
 
 .tab .season { font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; }
 .tab .sp { font-size: 13px; font-weight: 600; color: var(--ink); }
-.tab.on { border-color: var(--ink); background: #fff; color: var(--ink); }
+.tab:hover { background: var(--raise); border-color: var(--muted); }
+.tab:active, .actions button:active { transform: translateY(1px); }
+.swatch:active { transform: scale(0.93); }
+.tab.on { border-color: var(--ink); background: var(--raise); color: var(--ink); }
+.swatch:hover { box-shadow: 0 0 0 2px var(--muted); }
 .tab:focus-visible, .swatch:focus-visible, button:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 
 #swatches { display: flex; gap: 6px; }
@@ -105,18 +170,18 @@ footer { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
   width: 26px; height: 26px;
   border-radius: 50%;
   border: 2px solid transparent;
-  box-shadow: 0 0 0 1px var(--line);
+  box-shadow: 0 0 0 1px var(--edge);
   cursor: pointer;
   padding: 0;
 }
 
-.swatch.on { border-color: var(--paving); box-shadow: 0 0 0 2px var(--ink); }
+.swatch.on { border-color: var(--page); box-shadow: 0 0 0 2px var(--ink); }
 
 .actions { display: flex; gap: 6px; margin-left: auto; }
 
 .actions button {
   padding: 8px 13px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--edge);
   border-radius: 9px;
   background: var(--panel);
   color: var(--ink);
@@ -125,26 +190,47 @@ footer { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
   cursor: pointer;
 }
 
-.actions button:hover { background: #fff; border-color: var(--muted); }
+.actions button:hover { background: var(--raise); border-color: var(--muted); }
 
-.readout {
-  flex: 1 0 100%;
-  font-size: 11px;
-  color: var(--muted);
-  font-variant-numeric: tabular-nums;
+/* Named properties, never `all`: a blanket transition animates layout too. */
+.tab, .swatch, .actions button, #url {
+  transition: background-color 120ms ease, border-color 120ms ease,
+              box-shadow 120ms ease, transform 90ms ease;
 }
 
-.readout.err { color: #9e3b58; font-weight: 600; }
+/* Short, and the only part that is an aria-live region: a screen reader should
+   hear the state change, not nine fields of build metadata on every keystroke. */
+.scan { flex: 1 0 100%; font-size: 11px; color: var(--ink); font-weight: 600; }
+.scan.err { color: var(--err); }
+.scan.saved { color: var(--good); }
+.scan:empty { display: none; }
+
+/* An unencodable or empty input leaves the previous scene on the stage; say so
+   visually instead of presenting a stale render as a finished result. */
+#stagewrap.invalid { opacity: 0.38; }
+.actions button[disabled] { opacity: 0.45; cursor: not-allowed; }
 
 @media (max-width: 620px) {
-  #app { padding: 10px; gap: 9px; }
+  #app {
+    padding: 10px;
+    padding-top: max(10px, env(safe-area-inset-top));
+    padding-right: max(10px, env(safe-area-inset-right));
+    padding-bottom: max(10px, env(safe-area-inset-bottom));
+    padding-left: max(10px, env(safe-area-inset-left));
+    gap: 9px;
+  }
   h1 { flex: 1 0 100%; }
   .actions { margin-left: 0; flex: 1 0 100%; }
   .actions button { flex: 1; }
-  .tab { padding: 5px 9px; }
+  .tab { padding: 9px 9px; }
   .tab .sp { font-size: 12px; }
+  #swatches { gap: 10px; }
+  .swatch { width: 36px; height: 36px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .hint { display: none; }
+  /* The hint carries no animation - hiding it only removed the one affordance
+     saying the plot is interactive, from the users least likely to discover it
+     by experiment. The motion itself is already damped in JS. */
+  .tab, .swatch, .actions button, #url { transition: none; }
 }
