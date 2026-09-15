@@ -3,7 +3,25 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>QR Arboretum (WebGL)</title>
+<title>QR Arboretum</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2032%2032'%3E%3Crect%20width='32'%20height='32'%20rx='7'%20fill='%232a2620'/%3E%3Crect%20x='7'%20y='7'%20width='18'%20height='18'%20fill='%23edeae3'/%3E%3Crect%20x='12'%20y='12'%20width='8'%20height='8'%20fill='%23eb6a8c'/%3E%3C/svg%3E">
+<link rel="canonical" href="https://nguyenhanhatminh0105-hue.github.io/voxel-qr-tree/">
+<!-- Social preview. The artifact is the pitch, so a shared link has to show the
+     diorama rather than a bare URL. docs/og.png is a real render at the 1200x630
+     card ratio, not a crop of the wide preview sheet. -->
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="QR Arboretum">
+<meta property="og:title" content="QR Arboretum">
+<meta property="og:description" content="Type a URL. It grows into an isometric voxel tree. Tap the plot and the whole diorama reads as a scannable QR code.">
+<meta property="og:url" content="https://nguyenhanhatminh0105-hue.github.io/voxel-qr-tree/">
+<meta property="og:image" content="https://nguyenhanhatminh0105-hue.github.io/voxel-qr-tree/docs/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="An isometric voxel cherry tree on a square plot whose paving spells out a QR code.">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="QR Arboretum">
+<meta name="twitter:description" content="Type a URL. It grows into an isometric voxel tree that reads as a scannable QR code from directly overhead.">
+<meta name="twitter:image" content="https://nguyenhanhatminh0105-hue.github.io/voxel-qr-tree/docs/og.png">
 <!-- Matches --page in each scheme. Without these the browser chrome stays
      light while the page paints #17150f, which reads as a rendering fault
      on mobile rather than a theme. -->
@@ -17,7 +35,16 @@
 <body>
 <div id="app">
   <header>
-    <h1>QR Arboretum</h1>
+    <!-- The claim, stated. Every visible string in the build used to be the
+         wordmark, a hint, two button labels and three transient messages - the
+         sentence that sells the project lived in og:description, where only a
+         link-unfurler ever read it. A visitor's first question is "is this
+         real?", so the page answers it before they scroll. -->
+    <div class="brand">
+      <h1>QR Arboretum</h1>
+      <p class="claim">Every voxel stands on a dark module. From directly
+        overhead, the diorama <em>is</em> the QR code.</p>
+    </div>
     <!-- translate="no": the value is a machine identifier, and a page
          translator rewriting it would silently encode a different link. -->
     <input id="url" name="url" type="url" inputmode="url" spellcheck="false"

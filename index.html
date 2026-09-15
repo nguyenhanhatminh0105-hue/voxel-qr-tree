@@ -3,7 +3,25 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>QR Arboretum (WebGL)</title>
+<title>QR Arboretum</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2032%2032'%3E%3Crect%20width='32'%20height='32'%20rx='7'%20fill='%232a2620'/%3E%3Crect%20x='7'%20y='7'%20width='18'%20height='18'%20fill='%23edeae3'/%3E%3Crect%20x='12'%20y='12'%20width='8'%20height='8'%20fill='%23eb6a8c'/%3E%3C/svg%3E">
+<link rel="canonical" href="https://nguyenhanhatminh0105-hue.github.io/voxel-qr-tree/">
+<!-- Social preview. The artifact is the pitch, so a shared link has to show the
+     diorama rather than a bare URL. docs/og.png is a real render at the 1200x630
+     card ratio, not a crop of the wide preview sheet. -->
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="QR Arboretum">
+<meta property="og:title" content="QR Arboretum">
+<meta property="og:description" content="Type a URL. It grows into an isometric voxel tree. Tap the plot and the whole diorama reads as a scannable QR code.">
+<meta property="og:url" content="https://nguyenhanhatminh0105-hue.github.io/voxel-qr-tree/">
+<meta property="og:image" content="https://nguyenhanhatminh0105-hue.github.io/voxel-qr-tree/docs/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="An isometric voxel cherry tree on a square plot whose paving spells out a QR code.">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="QR Arboretum">
+<meta name="twitter:description" content="Type a URL. It grows into an isometric voxel tree that reads as a scannable QR code from directly overhead.">
+<meta name="twitter:image" content="https://nguyenhanhatminh0105-hue.github.io/voxel-qr-tree/docs/og.png">
 <!-- Matches --page in each scheme. Without these the browser chrome stays
      light while the page paints #17150f, which reads as a rendering fault
      on mobile rather than a theme. -->
@@ -96,13 +114,28 @@ html, body {
 
 header { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 
+.brand { margin-right: 8px; min-width: 0; }
+
 h1 {
   font-size: 18px;
   font-weight: 700;
   letter-spacing: -0.02em;
-  margin: 0 8px 0 0;
+  margin: 0;
   white-space: nowrap;
 }
+
+/* The standing claim. 12px muted sits under the wordmark without competing
+   with it, and `text-wrap: balance` keeps the two lines even rather than
+   leaving one orphaned word. */
+.claim {
+  margin: 1px 0 0;
+  max-width: 46ch;
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--muted);
+  text-wrap: balance;
+}
+.claim em { font-style: normal; font-weight: 650; color: var(--ink); }
 
 #url {
   flex: 1 1 260px;
@@ -144,10 +177,12 @@ h1 {
 /* Inside the stage, which stays light in both themes, so this pill keeps the
    light-theme values rather than following --muted into an unreadable pale
    text on a pale pill. */
+/* Raised from 11px: this is the only affordance announcing the central
+   interaction, and in the code view it carries the measured proof. */
 .hint {
   position: absolute;
   left: 12px; bottom: 10px;
-  font-size: 11px;
+  font-size: 12px;
   color: #6b6459;
   background: rgba(246, 244, 239, 0.82);
   padding: 3px 8px;
@@ -229,14 +264,35 @@ footer { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 24px; }
 
 /* Short, and the only part that is an aria-live region: a screen reader should
    hear the state change, not nine fields of build metadata on every keystroke. */
-.scan { flex: 1 0 100%; font-size: 11px; color: var(--ink); font-weight: 600; }
+/* The row is RESERVED, never collapsed. `.scan:empty { display: none }` meant
+   the footer grew 44->70px the moment a message appeared, #stagewrap shrank by
+   26px, and - because the canvas keeps its own size until a window resize -
+   `overflow: hidden` sheared 26px off the bottom of the diorama. The trigger
+   was the success path: press PNG, and the reward was the plot getting its
+   corner cut off. */
+.scan {
+  flex: 1 0 100%;
+  /* Exact, not min-: 11px text at the inherited 1.5 line-height renders 16.5px,
+     so a 15px floor still let the row grow by 1.5px when a message appeared. */
+  min-height: 17px;
+  line-height: 17px;
+  font-size: 11px;
+  color: var(--ink);
+  font-weight: 600;
+}
 .scan.err { color: var(--err); }
 .scan.saved { color: var(--good); }
-.scan:empty { display: none; }
+.scan:empty { visibility: hidden; }   /* reserved, not collapsed - see above */
 
 /* An unencodable or empty input leaves the previous scene on the stage; say so
-   visually instead of presenting a stale render as a finished result. */
-#stagewrap.invalid { opacity: 0.38; }
+   visually instead of presenting a stale render as a finished result.
+
+   The opacity is on the CANVAS, not on the wrapper. Dimming the wrapper took
+   .hint down with it: measured 1.71:1 in light and 2.29:1 in dark, far under
+   AA - and since the empty state is also the FIRST-RUN state, the one line
+   telling a newcomer the plot is interactive was at its least legible exactly
+   when the page was emptiest. */
+#stagewrap.invalid #stage { opacity: 0.38; }
 .actions button[disabled] { opacity: 0.45; cursor: not-allowed; }
 
 @media (max-width: 620px) {
@@ -248,13 +304,18 @@ footer { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 24px; }
     padding-left: max(10px, env(safe-area-inset-left));
     gap: 9px;
   }
-  h1 { flex: 1 0 100%; }
+  .brand { flex: 1 0 100%; margin-right: 0; }
+  .claim { font-size: 11.5px; max-width: none; }
   .actions { margin-left: 0; flex: 1 0 100%; }
   .actions button { flex: 1; }
   .tab { padding: 9px 9px; }
   .tab .sp { font-size: 12px; }
-  #swatches { gap: 10px; }
-  .swatch { width: 36px; height: 36px; }
+  /* Measured at 390x844: swatches came out 36px and the action buttons 39px,
+     both under the 44px thumb target. Pitch is not hit area - a 10px gap
+     around a 36px dot is still a 36px dot. */
+  #swatches { gap: 8px; }
+  .swatch { width: 44px; height: 44px; }
+  .actions button { min-height: 44px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -269,7 +330,16 @@ footer { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 24px; }
 <body>
 <div id="app">
   <header>
-    <h1>QR Arboretum</h1>
+    <!-- The claim, stated. Every visible string in the build used to be the
+         wordmark, a hint, two button labels and three transient messages - the
+         sentence that sells the project lived in og:description, where only a
+         link-unfurler ever read it. A visitor's first question is "is this
+         real?", so the page answers it before they scroll. -->
+    <div class="brand">
+      <h1>QR Arboretum</h1>
+      <p class="claim">Every voxel stands on a dark module. From directly
+        overhead, the diorama <em>is</em> the QR code.</p>
+    </div>
     <!-- translate="no": the value is a machine identifier, and a page
          translator rewriting it would silently encode a different link. -->
     <input id="url" name="url" type="url" inputmode="url" spellcheck="false"
@@ -6833,6 +6903,35 @@ void main() {
   }
 
   // --- scene build ------------------------------------------------------
+  /* The hint was hardcoded in the template and no code ever touched it, so it
+     still read "tap the plot to look straight down" while you were already
+     looking straight down, and in the empty state where there is nothing to
+     tap. The flip BUTTON relabels itself; this is the same affordance and it
+     has to keep up. In the code view it earns its place by naming the payoff
+     the whole project exists for rather than repeating the instruction. */
+  function syncHint() {
+    var el = document.querySelector('.hint');
+    if (!el) return;
+    if (state.empty || state.error) { el.hidden = true; return; }
+    el.hidden = false;
+    if (state.target <= 0.5) {
+      el.textContent = 'tap the plot to look straight down';
+      return;
+    }
+    /* The payoff line. Every number here is already in memory at the moment the
+       flip settles, and every one of them was measured rather than asserted -
+       so the code view states what a sceptic would otherwise have to take on
+       faith. A pretty picture becomes a claim that can be checked in five
+       seconds with a phone. */
+    var bits = ['point a camera at it'];
+    if (state.qr) bits.push('QR v' + state.qr.version + ', level ' + state.qr.ecl);
+    if (state.scene && state.scene.palette) {
+      var pal = state.scene.palette;
+      bits.push('foliage ' + Palette.contrast(pal.foliageTop, pal.paving).toFixed(1) + ':1');
+    }
+    el.textContent = bits.join('  ·  ');
+  }
+
   /* The canvas IS the app, and to assistive tech it was an unlabelled box:
      no role, no name, nothing. Describe the scene it currently holds, and
      re-describe it whenever the scene is rebuilt. The label carries the
@@ -6840,15 +6939,25 @@ void main() {
   function describeStage() {
     var el = renderer && renderer.domElement;
     if (!el) return;
-    el.setAttribute('role', 'img');
+    /* The stage is OPERABLE, not a picture: Render.attachStageKeys gives it
+       tabIndex, role=button and an Enter handler. An earlier version of this
+       function set role="img" here and ran after that, which produced a
+       focusable role="img" - an element that takes keyboard focus and then
+       announces as a static image with no operable semantics - and threw away
+       the "press Enter" instruction on every rebuild. One function owns the
+       whole label now, scene description and action together. */
+    var flipped = state.target > 0.5;
+    el.setAttribute('role', 'button');
+    el.setAttribute('aria-pressed', flipped ? 'true' : 'false');
     var text;
-    if (state.empty) text = 'Empty plot. Type a link to plant a tree.';
+    if (state.empty) text = 'Empty plot. Type a link above to plant a tree.';
     else if (state.error) text = 'Cannot encode this link: ' + state.error;
     else {
       var sp = Scene.SPECIES.filter(function (x) { return x.id === state.species; })[0];
       text = 'Isometric voxel ' + ((sp && sp.name) || state.species).toLowerCase() +
-             ' on a plot that reads as a QR code for ' + state.text +
-             '. Use Flip to Code to look straight down.';
+             ' on a plot that reads as a QR code for ' + state.text + '. ' +
+             (flipped ? 'Press Enter to return to the tree.'
+                      : 'Press Enter to look straight down at the code.');
     }
     el.setAttribute('aria-label', text);
   }
@@ -6862,6 +6971,7 @@ void main() {
       state.empty = true;
       Permalink.write(state);
       describeStage();
+      syncHint();
       updateReadout();
       return;
     }
@@ -6873,6 +6983,7 @@ void main() {
       state.error = e.message;
       Permalink.write(state);
       describeStage();
+      syncHint();
       updateReadout();
       return;
     }
@@ -6885,6 +6996,7 @@ void main() {
        control handlers - which is how they stay in step. */
     Permalink.write(state);
     describeStage();
+    syncHint();
     state.scene.id = [state.text, state.species, state.swatch].join('|');
 
     var pal = state.scene.palette, n = state.scene.n;
@@ -7263,6 +7375,7 @@ void main() {
     input.value = state.text;
     var deb;
     input.addEventListener('input', function () {
+      cancelDemo();
       clearTimeout(deb);
       deb = setTimeout(function () { state.text = input.value.trim(); rebuild(); }, 220);
     });
@@ -7307,16 +7420,14 @@ void main() {
       document.getElementById('swatches').appendChild(b);
     });
 
-    /* The label is static in the template, so before this it read "Flip to
-       code" while already in the code view - naming the state, not the action.
-       Keep it on the action the click performs. */
-    function syncFlipLabel() {
-      var b = document.getElementById('flip');
-      if (b) b.textContent = state.target > 0.5 ? 'Flip to tree' : 'Flip to code';
-    }
     function toggle() {
+      cancelDemo();
       state.target = state.target > 0.5 ? 0 : 1;
       syncFlipLabel();
+      // The stage label and aria-pressed both name the view, so they have to
+      // move with it - rebuild() alone would leave them a flip behind.
+      describeStage();
+      syncHint();
     }
     syncFlipLabel();
     renderer.domElement.addEventListener('click', toggle);
@@ -7347,6 +7458,55 @@ void main() {
     state.species = Permalink.pick(got.species, ids, state.species);
     var swatchIds = Palette.SWATCHES.map(function (x) { return x.id; });
     state.swatch = got.swatch ? Permalink.pick(got.swatch, swatchIds, null) : state.swatch;
+  }
+
+  /* Show the trick once, unprompted.
+
+     The flip IS the product, and its only discovery affordance is a small pill
+     in a corner of the stage. A visitor who skims for twenty seconds never taps
+     it, so they never see the diorama resolve into a code - they leave having
+     evaluated a picture of a tree. This performs the reveal for them: a beat to
+     take in the tree, the swing down, a hold on the code, and back.
+
+     It stands down completely and permanently at the first sign that someone -
+     or something - else is driving:
+       - prefers-reduced-motion, where an unrequested camera move is exactly
+         what the preference is asking not to happen;
+       - a hash deep link, because that visitor arrived with intent and already
+         chose what to look at;
+       - any interaction at all, which cancels it mid-flight;
+       - any call into window.__arb, so the verification harness never races a
+         camera animation it did not ask for. That last one is why cancelDemo()
+         is wired into the test hooks rather than kept private. */
+  var demoTimers = [];
+  var demoDone = false;
+
+  function cancelDemo() {
+    demoDone = true;
+    for (var i = 0; i < demoTimers.length; i++) clearTimeout(demoTimers[i]);
+    demoTimers.length = 0;
+  }
+
+  /* The label is static in the template, so before this it read "Flip to code"
+     while already in the code view - naming the state, not the action. Keep it
+     on the action the click performs.
+
+     Module scope, not inside bind(): the auto-demo drives the flip too, and
+     when this lived as a local of bind() the demo's timer threw a silent
+     ReferenceError and the reveal never ran. */
+  function syncFlipLabel() {
+    var b = document.getElementById('flip');
+    if (b) b.textContent = state.target > 0.5 ? 'Flip to tree' : 'Flip to code';
+  }
+
+  function runDemo(deepLinked) {
+    if (demoDone || reduceMotion || deepLinked) return;
+    function at(ms, fn) { demoTimers.push(setTimeout(function () {
+      if (!demoDone) fn();
+    }, ms)); }
+    at(1100, function () { state.target = 1; syncFlipLabel(); describeStage(); syncHint(); });
+    at(3400, function () { state.target = 0; syncFlipLabel(); describeStage(); syncHint(); });
+    at(4600, cancelDemo);
   }
 
   function init() {
@@ -7380,10 +7540,12 @@ void main() {
        state of every tab from `state`. Reading it afterwards would build the
        controls against the defaults and then silently disagree with the
        scene. */
+    var deepLinked = !!(Permalink.read().text || Permalink.read().species);
     applyHash();
     bind();
     resize();
     rebuild();
+    runDemo(deepLinked);
     requestAnimationFrame(frame);
   }
 
@@ -7391,6 +7553,7 @@ void main() {
   window.__arb = {
     renderer: 'three',
     setState: function (o) {
+      cancelDemo();          // the harness is driving; never race it
       if (o.text !== undefined) state.text = o.text;
       if (o.species) state.species = o.species;
       if (o.swatch) state.swatch = o.swatch;
@@ -7399,7 +7562,7 @@ void main() {
       return { version: state.qr.version, size: state.qr.size,
                voxels: state.scene.voxels.length, stats: state.scene.stats };
     },
-    renderAt: function (t, clock) { state.t = t; state.target = t; drawFrame(t, clock); return true; },
+    renderAt: function (t, clock) { cancelDemo(); state.t = t; state.target = t; drawFrame(t, clock); return true; },
     matrix: function () {
       return state.qr.modules.map(function (r) { return r.map(function (v) { return v ? 1 : 0; }); });
     },

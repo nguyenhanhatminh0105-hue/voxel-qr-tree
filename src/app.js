@@ -27,21 +27,60 @@
   var startTime = performance.now();
 
   // --- scene ------------------------------------------------------------
+  /* The hint was hardcoded in the template and no code ever touched it, so it
+     still read "tap the plot to look straight down" while you were already
+     looking straight down, and in the empty state where there is nothing to
+     tap. The flip BUTTON relabels itself; this is the same affordance and it
+     has to keep up. In the code view it earns its place by naming the payoff
+     the whole project exists for rather than repeating the instruction. */
+  function syncHint() {
+    var el = document.querySelector('.hint');
+    if (!el) return;
+    if (state.empty || state.error) { el.hidden = true; return; }
+    el.hidden = false;
+    if (state.target <= 0.5) {
+      el.textContent = 'tap the plot to look straight down';
+      return;
+    }
+    /* The payoff line. Every number here is already in memory at the moment the
+       flip settles, and every one of them was measured rather than asserted -
+       so the code view states what a sceptic would otherwise have to take on
+       faith. A pretty picture becomes a claim that can be checked in five
+       seconds with a phone. */
+    var bits = ['point a camera at it'];
+    if (state.qr) bits.push('QR v' + state.qr.version + ', level ' + state.qr.ecl);
+    if (state.scene && state.scene.palette) {
+      var pal = state.scene.palette;
+      bits.push('foliage ' + Palette.contrast(pal.foliageTop, pal.paving).toFixed(1) + ':1');
+    }
+    el.textContent = bits.join('  ·  ');
+  }
+
   /* The canvas IS the app, and to assistive tech it was an unlabelled box:
      no role, no name, nothing. Describe the scene it currently holds, and
      re-describe it whenever the scene is rebuilt. */
   function describeStage() {
     var el = canvas || document.getElementById('stage');
     if (!el) return;
-    el.setAttribute('role', 'img');
+    /* The stage is OPERABLE, not a picture: Render.attachStageKeys gives it
+       tabIndex, role=button and an Enter handler. An earlier version of this
+       function set role="img" here and ran after that, which produced a
+       focusable role="img" - an element that takes keyboard focus and then
+       announces as a static image with no operable semantics - and threw away
+       the "press Enter" instruction on every rebuild. One function owns the
+       whole label now, scene description and action together. */
+    var flipped = state.target > 0.5;
+    el.setAttribute('role', 'button');
+    el.setAttribute('aria-pressed', flipped ? 'true' : 'false');
     var text;
-    if (state.empty) text = 'Empty plot. Type a link to plant a tree.';
+    if (state.empty) text = 'Empty plot. Type a link above to plant a tree.';
     else if (state.error) text = 'Cannot encode this link: ' + state.error;
     else {
       var sp = Scene.SPECIES.filter(function (x) { return x.id === state.species; })[0];
       text = 'Isometric voxel ' + ((sp && sp.name) || state.species).toLowerCase() +
-             ' on a plot that reads as a QR code for ' + state.text +
-             '. Use Flip to Code to look straight down.';
+             ' on a plot that reads as a QR code for ' + state.text + '. ' +
+             (flipped ? 'Press Enter to return to the tree.'
+                      : 'Press Enter to look straight down at the code.');
     }
     el.setAttribute('aria-label', text);
   }
@@ -67,6 +106,7 @@
       state.empty = true;
       Permalink.write(state);
       describeStage();
+      syncHint();
       updateReadout();
       return;
     }
@@ -78,6 +118,7 @@
       state.error = e.message;
       Permalink.write(state);
       describeStage();
+      syncHint();
       updateReadout();
       return;
     }
@@ -93,6 +134,7 @@
        control handlers - which is how they stay in step. */
     Permalink.write(state);
     describeStage();
+    syncHint();
     seedParticles();
     groundKey = '';
     updateReadout();
@@ -332,6 +374,7 @@
     input.value = state.text;
     var deb;
     input.addEventListener('input', function () {
+      cancelDemo();
       clearTimeout(deb);
       deb = setTimeout(function () { state.text = input.value.trim(); rebuild(); }, 220);
     });
@@ -376,16 +419,14 @@
       document.getElementById('swatches').appendChild(b);
     });
 
-    /* The label is static in the template, so before this it read "Flip to
-       code" while already in the code view - naming the state, not the action.
-       Keep it on the action the click performs. */
-    function syncFlipLabel() {
-      var b = document.getElementById('flip');
-      if (b) b.textContent = state.target > 0.5 ? 'Flip to tree' : 'Flip to code';
-    }
     function toggle() {
+      cancelDemo();
       state.target = state.target > 0.5 ? 0 : 1;
       syncFlipLabel();
+      // The stage label and aria-pressed both name the view, so they have to
+      // move with it - rebuild() alone would leave them a flip behind.
+      describeStage();
+      syncHint();
     }
     syncFlipLabel();
     canvas.addEventListener('click', toggle);
@@ -400,6 +441,7 @@
   // The harness drives the render deterministically through these.
   window.__arb = {
     setState: function (o) {
+      cancelDemo();          // the harness is driving; never race it
       if (o.text !== undefined) state.text = o.text;
       if (o.species) state.species = o.species;
       if (o.swatch) state.swatch = o.swatch;
@@ -411,6 +453,7 @@
     },
     // Draw one frame at an explicit clock, bypassing rAF.
     renderAt: function (t, clock) {
+      cancelDemo();          // the harness is driving; never race it
       state.t = t; state.target = t;
       var e = Render.easeInOutCubic(t);
       var cam = Render.makeCamera(state.scene.n, state.scene.maxZ, e, W, H);
@@ -476,13 +519,64 @@
     size: function () { return { W: W, H: H, dpr: dpr }; }
   };
 
+  /* Show the trick once, unprompted.
+
+     The flip IS the product, and its only discovery affordance is a small pill
+     in a corner of the stage. A visitor who skims for twenty seconds never taps
+     it, so they never see the diorama resolve into a code - they leave having
+     evaluated a picture of a tree. This performs the reveal for them: a beat to
+     take in the tree, the swing down, a hold on the code, and back.
+
+     It stands down completely and permanently at the first sign that someone -
+     or something - else is driving:
+       - prefers-reduced-motion, where an unrequested camera move is exactly
+         what the preference is asking not to happen;
+       - a hash deep link, because that visitor arrived with intent and already
+         chose what to look at;
+       - any interaction at all, which cancels it mid-flight;
+       - any call into window.__arb, so the verification harness never races a
+         camera animation it did not ask for. That last one is why cancelDemo()
+         is wired into the test hooks rather than kept private. */
+  var demoTimers = [];
+  var demoDone = false;
+
+  function cancelDemo() {
+    demoDone = true;
+    for (var i = 0; i < demoTimers.length; i++) clearTimeout(demoTimers[i]);
+    demoTimers.length = 0;
+  }
+
+  /* The label is static in the template, so before this it read "Flip to code"
+     while already in the code view - naming the state, not the action. Keep it
+     on the action the click performs.
+
+     Module scope, not inside bind(): the auto-demo drives the flip too, and
+     when this lived as a local of bind() the demo's timer threw a silent
+     ReferenceError and the reveal never ran. */
+  function syncFlipLabel() {
+    var b = document.getElementById('flip');
+    if (b) b.textContent = state.target > 0.5 ? 'Flip to tree' : 'Flip to code';
+  }
+
+  function runDemo(deepLinked) {
+    if (demoDone || reduceMotion || deepLinked) return;
+    function at(ms, fn) { demoTimers.push(setTimeout(function () {
+      if (!demoDone) fn();
+    }, ms)); }
+    at(1100, function () { state.target = 1; syncFlipLabel(); describeStage(); syncHint(); });
+    at(3400, function () { state.target = 0; syncFlipLabel(); describeStage(); syncHint(); });
+    at(4600, cancelDemo);
+  }
+
   function init() {
     /* Restore before bind(), which seeds the input value and the pressed
        state of every tab from `state`. */
+    var deepLinked = !!(Permalink.read().text || Permalink.read().species);
     applyHash();
     bind();
     resize();
     rebuild();
+    runDemo(deepLinked);
     requestAnimationFrame(frame);
   }
 

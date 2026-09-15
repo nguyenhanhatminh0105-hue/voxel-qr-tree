@@ -83,13 +83,28 @@ html, body {
 
 header { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 
+.brand { margin-right: 8px; min-width: 0; }
+
 h1 {
   font-size: 18px;
   font-weight: 700;
   letter-spacing: -0.02em;
-  margin: 0 8px 0 0;
+  margin: 0;
   white-space: nowrap;
 }
+
+/* The standing claim. 12px muted sits under the wordmark without competing
+   with it, and `text-wrap: balance` keeps the two lines even rather than
+   leaving one orphaned word. */
+.claim {
+  margin: 1px 0 0;
+  max-width: 46ch;
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--muted);
+  text-wrap: balance;
+}
+.claim em { font-style: normal; font-weight: 650; color: var(--ink); }
 
 #url {
   flex: 1 1 260px;
@@ -131,10 +146,12 @@ h1 {
 /* Inside the stage, which stays light in both themes, so this pill keeps the
    light-theme values rather than following --muted into an unreadable pale
    text on a pale pill. */
+/* Raised from 11px: this is the only affordance announcing the central
+   interaction, and in the code view it carries the measured proof. */
 .hint {
   position: absolute;
   left: 12px; bottom: 10px;
-  font-size: 11px;
+  font-size: 12px;
   color: #6b6459;
   background: rgba(246, 244, 239, 0.82);
   padding: 3px 8px;
@@ -216,14 +233,35 @@ footer { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 24px; }
 
 /* Short, and the only part that is an aria-live region: a screen reader should
    hear the state change, not nine fields of build metadata on every keystroke. */
-.scan { flex: 1 0 100%; font-size: 11px; color: var(--ink); font-weight: 600; }
+/* The row is RESERVED, never collapsed. `.scan:empty { display: none }` meant
+   the footer grew 44->70px the moment a message appeared, #stagewrap shrank by
+   26px, and - because the canvas keeps its own size until a window resize -
+   `overflow: hidden` sheared 26px off the bottom of the diorama. The trigger
+   was the success path: press PNG, and the reward was the plot getting its
+   corner cut off. */
+.scan {
+  flex: 1 0 100%;
+  /* Exact, not min-: 11px text at the inherited 1.5 line-height renders 16.5px,
+     so a 15px floor still let the row grow by 1.5px when a message appeared. */
+  min-height: 17px;
+  line-height: 17px;
+  font-size: 11px;
+  color: var(--ink);
+  font-weight: 600;
+}
 .scan.err { color: var(--err); }
 .scan.saved { color: var(--good); }
-.scan:empty { display: none; }
+.scan:empty { visibility: hidden; }   /* reserved, not collapsed - see above */
 
 /* An unencodable or empty input leaves the previous scene on the stage; say so
-   visually instead of presenting a stale render as a finished result. */
-#stagewrap.invalid { opacity: 0.38; }
+   visually instead of presenting a stale render as a finished result.
+
+   The opacity is on the CANVAS, not on the wrapper. Dimming the wrapper took
+   .hint down with it: measured 1.71:1 in light and 2.29:1 in dark, far under
+   AA - and since the empty state is also the FIRST-RUN state, the one line
+   telling a newcomer the plot is interactive was at its least legible exactly
+   when the page was emptiest. */
+#stagewrap.invalid #stage { opacity: 0.38; }
 .actions button[disabled] { opacity: 0.45; cursor: not-allowed; }
 
 @media (max-width: 620px) {
@@ -235,13 +273,18 @@ footer { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 24px; }
     padding-left: max(10px, env(safe-area-inset-left));
     gap: 9px;
   }
-  h1 { flex: 1 0 100%; }
+  .brand { flex: 1 0 100%; margin-right: 0; }
+  .claim { font-size: 11.5px; max-width: none; }
   .actions { margin-left: 0; flex: 1 0 100%; }
   .actions button { flex: 1; }
   .tab { padding: 9px 9px; }
   .tab .sp { font-size: 12px; }
-  #swatches { gap: 10px; }
-  .swatch { width: 36px; height: 36px; }
+  /* Measured at 390x844: swatches came out 36px and the action buttons 39px,
+     both under the 44px thumb target. Pitch is not hit area - a 10px gap
+     around a 36px dot is still a 36px dot. */
+  #swatches { gap: 8px; }
+  .swatch { width: 44px; height: 44px; }
+  .actions button { min-height: 44px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
