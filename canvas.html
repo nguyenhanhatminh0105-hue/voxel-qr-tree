@@ -1550,7 +1550,16 @@ footer { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 24px; }
      interior columns keep a proportional body rather than a thin lid, which is
      what stopped the crown reading as a hanging curtain. Capped so very large
      codes stay affordable. */
-  var SHELL_MIN = 4.2, SHELL_FRAC = 0.70, SHELL_MAX = 9.0;
+  /* SHELL_MAX caps how deep the shell goes so an enormous crown cannot
+     generate unbounded voxels. At 9.0 that cap was distorting SHAPE rather
+     than bounding cost: the ginkgo's columns span 19 modules on average, so
+     span * SHELL_FRAC wanted 13.4 and got clipped to 9.0, leaving 26% of every
+     column hollow. A wide crown hides that behind the columns in front - the
+     oak is 33 modules across - but the ginkgo is only 18 wide and you looked
+     straight through the middle of it. 13.5 lets the proportional rule run to
+     the spans this project actually produces: hollow columns fall from 45/130
+     to 9/130 on the ginkgo and 6/329 to 0 on the oak, for 7% more voxels. */
+  var SHELL_MIN = 4.2, SHELL_FRAC = 0.70, SHELL_MAX = 22.0;
   /* The crown needs an underside too. Filling only downward from the top left
      each column a cap on a much longer span - a hollow dome with nothing
      beneath it, which is why the crown looked unmoored from the plot.
@@ -1567,6 +1576,7 @@ footer { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 24px; }
      This ratio is also the cheapest lever on voxel count: you see far less of
      the underside than the top, so thinning it costs little visually. */
   var SHELL_LOWER = 0.58;
+  var BRIDGE = 2.5;       // vertical slack merged away rather than left hollow
 
   var SPECIES = [
     { id: 'sakura', season: 'Spring', name: 'Sakura', fall: 'petals' },
@@ -1786,7 +1796,13 @@ footer { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 24px; }
       var iv = this.spans[k].slice().sort(function (a, b) { return a[0] - b[0]; });
       var merged = [], cur = iv[0].slice();
       for (var j = 1; j < iv.length; j++) {
-        if (iv[j][0] <= cur[1]) cur[1] = Math.max(cur[1], iv[j][1]);
+        /* Bridge a small gap rather than starting a new span. Two clumps that
+           miss each other by a module leave a slot of clear air up the column,
+           and on a narrow crown - the ginkgo is 18 modules across, with nothing
+           in front to hide it - that slot reads as a bite taken out of the tree
+           rather than as foliage texture. Anything wider than BRIDGE is left
+           alone, so real separation between lobes survives. */
+        if (iv[j][0] <= cur[1] + BRIDGE) cur[1] = Math.max(cur[1], iv[j][1]);
         else { merged.push(cur); cur = iv[j].slice(); }
       }
       merged.push(cur);
@@ -1878,6 +1894,15 @@ footer { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 24px; }
      at mid-crown height where the surrounding foliage hides it from the side,
      and a deep foliage tone so it reads as shadow within the canopy from
      above. */
+  /* KEEP. Deleting this was tried and measured: with the carpet back under the
+     crown the plate looks redundant, and on the WebGL build it is - 144/144
+     ZBar, 0 module diffs without it. The canvas build fails, 136/144, and the
+     failures are payload-specific: six of eight are the willow, whose worst
+     module covers 5% of its own footprint because a tendril is one narrow
+     column. Module reconstruction, Aruco and the camera simulation ALL still
+     passed at 144/144 - only real ZBar disagreed, which is what a module
+     sitting on the right side of the threshold with no margin left looks
+     like. */
   Ctx.prototype.backingPlates = function () {
     var pal = this.pal, n = this.n, rnd = this.rnd;
     /* Tinted inside the leaf ladder's own range rather than as a distinct
@@ -1905,7 +1930,16 @@ footer { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 24px; }
          pack 0.95. Foliage is now 0.55-0.82 at pack 0.84, dense enough to
          swallow it, and at the underside the overhang read as a flat shelf
          protruding below the crown's lower rim. */
-      var mid = cz[0] + (cz[1] - cz[0]) * 0.42;
+      /* Tucked just under the crown's top surface, not at 42% of the column.
+         At mid-height a full-module square sticks out past the rounded leaves
+         on every thin rim column and reads as a floating platform under the
+         foliage - the squares are grid-aligned and flat while everything
+         around them is round and jittered, so the eye finds them instantly.
+         The top of the column is where the shell packs leaves densest, so a
+         plate two modules below it has foliage above and around it from any
+         side angle, while still backstopping every gap below it from
+         overhead - which is the only direction it exists for. */
+      var mid = cz[0] + (cz[1] - cz[0]) * 0.50;
       this.out.push({
         x: mx, y: my, z: mid,
         w: 1, d: 1, h: 0.12,
@@ -2156,14 +2190,25 @@ footer { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 24px; }
          the opposite of a conifer. Radius grows with u before the apex taper
          pulls it back, which is what separates it from a column of blobs. */
       var flare = 0.55 + 0.85 * u;
-      var rad = (0.03 + rnd() * 0.17) * n * taper * flare;
+      var rx = n * (0.205 - 0.060 * u);          // this clump's own radius
+      /* The offset may never approach the clump's own radius. Uncapped, taper
+         and flare peak together around u = 0.6-0.7 and push it to 0.97 * rx -
+         a clump sitting so far off the axis that it barely touches it, with
+         the next clump thrown to the opposite side. 81 of 134 columns ended up
+         with disconnected runs averaging 5.4 modules of clear air, and on a
+         crown only 18 modules across there is nothing in front to hide that:
+         you look straight through the middle of the tree. Capping at 0.62 * rx
+         guarantees consecutive clumps overlap across the axis whatever angles
+         they draw. */
+      var rad = Math.min(rx * 0.62,
+                         (0.03 + rnd() * 0.17) * n * taper * flare);
       /* Radius and sub-count both up: on a narrow axis, consecutive clumps
          were not overlapping, and a gap on a columnar crown reads as a bite
          taken out of the tree rather than as foliage texture. */
       c.clump(cx + 0.5 + Math.cos(a) * rad,
               cy + 0.5 + Math.sin(a) * rad,
               trunkH + n * 0.02 + u * crownH,
-              n * (0.205 - 0.060 * u), n * (0.160 - 0.030 * u), 3);
+              rx, n * (0.160 - 0.030 * u), 3);
     }
     /* A continuous central spine. The offset clumps above shape the fan, but
        they ride a narrow axis at random angles: on a columnar crown that
