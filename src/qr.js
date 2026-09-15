@@ -494,11 +494,27 @@
   function getBit(x, i) { return ((x >>> i) & 1) !== 0; }
 
   // --- public entry point ------------------------------------------------
+  var ENCODE_OPTS = ['ecl', 'minVersion', 'maxVersion', 'padQuirk', 'mask', 'boost'];
+
   function encode(text, opts) {
     opts = opts || {};
+    /* Reject unknown option keys instead of ignoring them. The error-correction
+       level is spelled `ecl`, but the level VALUES are named ECC in the spec and
+       in the message below, so `{ ecc: 'H' }` is the natural typo - and it used
+       to be accepted in silence, quietly encoding at the default M while the
+       caller believed they had asked for H. A lower correction level is exactly
+       the kind of degradation that never shows up in a clean-image decode test
+       and only bites on a scuffed print at an angle. */
+    for (var k in opts) {
+      if (!Object.prototype.hasOwnProperty.call(opts, k)) continue;
+      if (ENCODE_OPTS.indexOf(k) < 0) {
+        throw new Error('unknown encode option: ' + k +
+          ' (did you mean ' + ENCODE_OPTS.join(', ') + '?)');
+      }
+    }
     var eclName = (opts.ecl || 'M').toUpperCase();
     var baseEcl = ECL[eclName];
-    if (!baseEcl) throw new Error('unknown ecc level: ' + eclName);
+    if (!baseEcl) throw new Error('unknown error-correction level: ' + eclName);
     var ecl = baseEcl;
     var bytes = typeof text === 'string' ? toUtf8(text) : Array.from(text);
 

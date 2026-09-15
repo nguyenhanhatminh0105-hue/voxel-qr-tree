@@ -118,7 +118,15 @@ h1 {
   background: var(--paving);
 }
 
-#stage { display: block; cursor: pointer; touch-action: manipulation; }
+/* -webkit-tap-highlight-color: the plot IS the artwork, and the UA default
+   flashes a translucent slab across it on every tap. Set to transparent
+   deliberately, not left to the UA - the flip animation is the feedback. */
+#stage {
+  display: block;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
 
 /* Inside the stage, which stays light in both themes, so this pill keeps the
    light-theme values rather than following --muted into an unreadable pale
@@ -192,11 +200,19 @@ footer { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 24px; }
 
 .actions button:hover { background: var(--raise); border-color: var(--muted); }
 
-/* Named properties, never `all`: a blanket transition animates layout too. */
+/* Named properties, never `all`: a blanket transition animates layout too.
+   background-color and border-color are not compositor properties, but these
+   are 26px controls changing on hover - the paint cost is trivial and the
+   alternative (opacity layers over every control) buys nothing here. */
 .tab, .swatch, .actions button, #url {
   transition: background-color 120ms ease, border-color 120ms ease,
               box-shadow 120ms ease, transform 90ms ease;
 }
+
+/* The stage dims to mark a payload it cannot encode. Opacity was outside the
+   transition list above, so the dim snapped on mid-keystroke and read as a
+   flicker rather than a state. */
+#stagewrap { transition: opacity 140ms ease; }
 
 /* Short, and the only part that is an aria-live region: a screen reader should
    hear the state change, not nine fields of build metadata on every keystroke. */
@@ -232,5 +248,5 @@ footer { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 24px; }
   /* The hint carries no animation - hiding it only removed the one affordance
      saying the plot is interactive, from the users least likely to discover it
      by experiment. The motion itself is already damped in JS. */
-  .tab, .swatch, .actions button, #url { transition: none; }
+  .tab, .swatch, .actions button, #url, #stagewrap { transition: none; }
 }

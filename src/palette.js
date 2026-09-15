@@ -120,7 +120,23 @@
      colour plus whether it had to move, so the UI/tests can report which
      choices the contrast floor overrode rather than silently "fixing" them. */
   function enforceContrast(hex, paving, minRatio) {
-    minRatio = minRatio || MIN_RATIO;
+    /* A floor below MIN_RATIO is almost certainly a mistake, and it fails
+       silently: the while loop simply never runs, the colour comes back
+       untouched, and `forced` reads false - indistinguishable from a colour
+       that was already dark enough. `enforceContrast('#ffffff', PAVING, 1)`
+       returned white, at 1.20:1, reporting success.
+
+       Note that 0 was already safe, because `|| MIN_RATIO` treats it as
+       absent, while 1 was not - the value that looks like "off" was the
+       harmless one and the innocuous-looking one disabled the check. Reject
+       anything under the floor rather than leaving that inverted. */
+    if (minRatio === undefined || minRatio === null || minRatio !== minRatio) {
+      minRatio = MIN_RATIO;
+    }
+    if (typeof minRatio !== 'number' || minRatio < MIN_RATIO) {
+      throw new Error('contrast floor ' + minRatio + ' is below MIN_RATIO ' +
+        MIN_RATIO + '; a lower floor silently disables the check');
+    }
     var out = hex, steps = 0;
     while (contrast(out, paving) < minRatio && steps < 60) {
       out = darken(out, 0.05);

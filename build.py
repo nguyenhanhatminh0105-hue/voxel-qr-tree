@@ -24,6 +24,9 @@ COMMON = {
     "QR": ("src", "qr.js"),
     "PALETTE": ("src", "palette.js"),
     "SCENE": ("src", "scene.js"),
+    # Shared rather than copied into each app: this project has already been
+    # bitten once by the same law living in two app files and drifting.
+    "PERMALINK": ("src", "permalink.js"),
 }
 
 CANVAS_PARTS = dict(COMMON, RENDER=("src", "render.js"), APP=("src", "app.js"))

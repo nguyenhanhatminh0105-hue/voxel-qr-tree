@@ -145,7 +145,27 @@
      its module. Crossing a module edge would put dark pixels over a paving
      module and corrupt the code, so the clamp here is load-bearing, not
      defensive tidiness. */
-  function place(out, mx, my, z, size, height, mat, kind, rnd) {
+  /* The ONE voxel constructor, and the one place both planting invariants are
+     enforced:
+
+       1. a voxel never crosses its module edge - structural, via the slack
+          left over from the clamped size;
+       2. a voxel only ever sits on a DARK module.
+
+     Rule 2 used to live in the five callers (addSpan, trunk, limb, tendril,
+     groundBlocks) by convention, while the comment above this function claimed
+     the invariant was "enforced in exactly one place". It was not: only rule 1
+     was. A new planting helper written against that comment would have called
+     place() directly, planted foliage on paving, and produced a code that ZBar
+     still decodes most of the time - the exact shape of failure this project
+     has already shipped twice. Taking the Ctx instead of its output array
+     makes the matrix reachable, so the rule can be checked where it belongs. */
+  function place(ctx, mx, my, z, size, height, mat, kind, rnd) {
+    if (!ctx.isDark(mx, my)) {
+      throw new Error('place() on a light module at ' + mx + ',' + my +
+        ' (' + kind + '): every voxel above ground must sit on a dark module');
+    }
+    var out = ctx.out;
     size = Math.max(0.06, Math.min(1, size));
     var slack = 1 - size;
     /* Bark is centred, never jittered. place()'s positional jitter is right
@@ -314,7 +334,7 @@
     while (z < zTop) {
       var size = sizeLo + rnd() * (sizeHi - sizeLo);
       var h = size * (0.95 + rnd() * 0.6);
-      place(this.out, mx, my, z, size, h, this.pal.mat.leaf, 'leaf', rnd);
+      place(this, mx, my, z, size, h, this.pal.mat.leaf, 'leaf', rnd);
       z += h * pack;
     }
   };
@@ -360,20 +380,30 @@
     for (var z = z0; z < z0 + height - 1e-6; z += seg) {
       var h = Math.min(seg, z0 + height - z);
       var size = width * (1 - 0.12 * (z - z0) / Math.max(1, height));
-      place(this.out, mx, my, z, size, h, this.pal.mat.bark, 'bark', this.rnd);
+      place(this, mx, my, z, size, h, this.pal.mat.bark, 'bark', this.rnd);
     }
     return true;
   };
 
   Ctx.prototype.limb = function (cx, cy, ang, len, z0, rise, w0) {
     var steps = Math.max(3, Math.round(len * 1.8));
+    /* A branch is a connected thing, so it ENDS at a carved module - it does
+       not skip across and resume in mid-air. `continue` here left a dotted
+       line of bark cubes hanging over nothing: half of all bark on the sakura
+       (30 of 59) and the oak (58 of 123), with 7-9 modules of clear air
+       beneath them. They read as fence posts standing on the plot.
+
+       Segment height has to cover the per-step rise as well. At a fixed 0.6
+       against a rise of ~0.66 per step, even two consecutive segments pulled
+       apart on their own. */
+    var segH = Math.max(0.6, rise / steps + 0.2);
     for (var k = 1; k <= steps; k++) {
       var f = k / steps;
       var mx = Math.floor(cx + Math.cos(ang) * len * f);
       var my = Math.floor(cy + Math.sin(ang) * len * f);
-      if (!this.isDark(mx, my)) continue;
+      if (!this.isDark(mx, my)) break;
       this.claim(mx, my);                       // limbs shade the ground too
-      place(this.out, mx, my, z0 + f * rise, w0 * (1 - 0.3 * f), 0.6,
+      place(this, mx, my, z0 + f * rise, w0 * (1 - 0.3 * f), segH,
         this.pal.mat.bark, 'bark', this.rnd);
     }
   };
@@ -390,7 +420,7 @@
     for (var j = 0; j < joints && remaining > 0.3; j++) {
       var segLen = j === joints - 1 ? remaining : remaining * (0.35 + rnd() * 0.4);
       segLen = Math.min(segLen, remaining);
-      place(this.out, mx, my, z - segLen, 0.13 + rnd() * 0.09, segLen,
+      place(this, mx, my, z - segLen, 0.13 + rnd() * 0.09, segLen,
         this.pal.mat.leaf, 'tendril', rnd);
       z -= segLen;
       remaining -= segLen;
@@ -549,7 +579,7 @@
           var dist = Math.min(1, Math.hypot(dx, dy) / 0.33);
           var bh2 = (0.34 + rnd() * 0.22) * (1.35 - 0.65 * dist);
           var before = this.out.length;
-          place(this.out, gx, gy, SLAB_TOP + 0.02, bw, bh2, pal.mat.grass, 'blade', rnd);
+          place(this, gx, gy, SLAB_TOP + 0.02, bw, bh2, pal.mat.grass, 'blade', rnd);
           var v = this.out[before];
           v.x = gx + sx; v.y = gy + sy;
           var ang = Math.atan2(dy, dx) + (rnd() - 0.5) * 0.8;
@@ -754,6 +784,75 @@
     sakura: plantSakura, oak: plantOak, ginkgo: plantGinkgo, willow: plantWillow
   };
 
+  /* Drop tiny foliage clumps that touch nothing.
+
+     The matrix carves whole columns out of a crown, so a crown legitimately
+     breaks into large chunks - that carving IS the look and must be left
+     alone. What is not the look is a speck of two or three leaves hanging in
+     clear air under the canopy. Measured on the four species, components of
+     five voxels or fewer account for 36-104 voxels (1-2% of the canopy) but
+     11-44 separate specks, so the threshold buys the cleanup cheaply and
+     leaves every real chunk standing.
+
+     Safe for scanning by construction: the ground layer alone reproduces the
+     matrix, and this only ever REMOVES dark material sitting on an
+     already-dark module. It can never lighten a module that must read dark. */
+  var MIN_CLUMP = 6;                 // components smaller than this are debris
+
+  function pruneFloaters(out) {
+    var body = [], i, j;
+    for (i = 0; i < out.length; i++) {
+      var k = out[i].kind;
+      if (k !== 'ground' && k !== 'grass' && k !== 'blade') body.push(i);
+    }
+    var GAP = 0.35;                  // vertical slack that still reads as touching
+    var col = {}, keyOf = {};
+    for (i = 0; i < body.length; i++) {
+      var v = out[body[i]];
+      var key = Math.floor(v.x) + ',' + Math.floor(v.y);
+      keyOf[body[i]] = key;
+      (col[key] || (col[key] = [])).push(body[i]);
+    }
+    var parent = {};
+    function find(a) { while (parent[a] !== a) { parent[a] = parent[parent[a]]; a = parent[a]; } return a; }
+    function union(a, b) { a = find(a); b = find(b); if (a !== b) parent[b] = a; }
+    for (i = 0; i < body.length; i++) parent[body[i]] = body[i];
+    function touches(a, b) {
+      return !(a.z > b.z + b.h + GAP || b.z > a.z + a.h + GAP);
+    }
+    var seen = {};
+    for (var key2 in col) {
+      var parts = key2.split(','), cx = +parts[0], cy = +parts[1];
+      var here = col[key2];
+      for (i = 0; i < here.length; i++)
+        for (j = i + 1; j < here.length; j++)
+          if (touches(out[here[i]], out[here[j]])) union(here[i], here[j]);
+      var nb = [(cx + 1) + ',' + cy, cx + ',' + (cy + 1)];
+      for (var d = 0; d < nb.length; d++) {
+        var other = col[nb[d]];
+        if (!other) continue;
+        for (i = 0; i < here.length; i++)
+          for (j = 0; j < other.length; j++)
+            if (touches(out[here[i]], out[other[j]])) union(here[i], other[j]);
+      }
+    }
+    var size = {};
+    for (i = 0; i < body.length; i++) {
+      var r = find(body[i]);
+      size[r] = (size[r] || 0) + 1;
+    }
+    var drop = {}, dropped = 0;
+    for (i = 0; i < body.length; i++) {
+      if (size[find(body[i])] < MIN_CLUMP) { drop[body[i]] = 1; dropped++; }
+    }
+    if (!dropped) return 0;
+    var kept = [];
+    for (i = 0; i < out.length; i++) if (!drop[i]) kept.push(out[i]);
+    out.length = 0;
+    for (i = 0; i < kept.length; i++) out.push(kept[i]);
+    return dropped;
+  }
+
   function build(opts) {
     var matrix = opts.matrix;
     var n = matrix.length;
@@ -778,6 +877,7 @@
        foliage rather than as a scatter with the plot showing through. */
     c.growCanopy(0.84, 0.55, 0.82);
     c.backingPlates();
+    var floaters = pruneFloaters(c.out);   // before the ground exists to anchor them
     var canopy = c.out.length;
     c.groundBlocks();
 

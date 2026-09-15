@@ -140,6 +140,26 @@
   }
 
   // --- scene build ------------------------------------------------------
+  /* The canvas IS the app, and to assistive tech it was an unlabelled box:
+     no role, no name, nothing. Describe the scene it currently holds, and
+     re-describe it whenever the scene is rebuilt. The label carries the
+     payload because that is the thing the visitor came to check. */
+  function describeStage() {
+    var el = renderer && renderer.domElement;
+    if (!el) return;
+    el.setAttribute('role', 'img');
+    var text;
+    if (state.empty) text = 'Empty plot. Type a link to plant a tree.';
+    else if (state.error) text = 'Cannot encode this link: ' + state.error;
+    else {
+      var sp = Scene.SPECIES.filter(function (x) { return x.id === state.species; })[0];
+      text = 'Isometric voxel ' + ((sp && sp.name) || state.species).toLowerCase() +
+             ' on a plot that reads as a QR code for ' + state.text +
+             '. Use Flip to Code to look straight down.';
+    }
+    el.setAttribute('aria-label', text);
+  }
+
   function rebuild() {
     /* No silent fallback to DEFAULT_URL. An empty field used to render a
        finished, exportable code for somebody else's link while the placeholder
@@ -147,6 +167,8 @@
     if (!state.text) {
       state.error = null;
       state.empty = true;
+      Permalink.write(state);
+      describeStage();
       updateReadout();
       return;
     }
@@ -156,6 +178,8 @@
       state.error = null;
     } catch (e) {
       state.error = e.message;
+      Permalink.write(state);
+      describeStage();
       updateReadout();
       return;
     }
@@ -163,6 +187,11 @@
       matrix: state.qr.modules, seed: state.text,
       species: state.species, swatch: state.swatch
     });
+    /* Every state change already funnels through rebuild(), so the hash and
+       the stage description are written here rather than in each of the three
+       control handlers - which is how they stay in step. */
+    Permalink.write(state);
+    describeStage();
     state.scene.id = [state.text, state.species, state.swatch].join('|');
 
     var pal = state.scene.palette, n = state.scene.n;
@@ -615,6 +644,18 @@
     window.addEventListener('resize', resize);
   }
 
+  /* A hash is visitor input, so nothing from it reaches the planter unchecked:
+     an unknown species throws by design, and `#s=gum` from an old link would
+     otherwise take the page down on load. */
+  function applyHash() {
+    var got = Permalink.read();
+    if (got.text) state.text = got.text;
+    var ids = Scene.SPECIES.map(function (x) { return x.id; });
+    state.species = Permalink.pick(got.species, ids, state.species);
+    var swatchIds = Palette.SWATCHES.map(function (x) { return x.id; });
+    state.swatch = got.swatch ? Permalink.pick(got.swatch, swatchIds, null) : state.swatch;
+  }
+
   function init() {
     var wrap = document.getElementById('stagewrap');
     renderer = new THREE.WebGLRenderer({
@@ -642,6 +683,11 @@
     camera = new THREE.OrthographicCamera(-1, 1, 1, -1, -2000, 2000);
     scene3.add(camera);
 
+    /* Restore before bind(), which seeds the input value and the pressed
+       state of every tab from `state`. Reading it afterwards would build the
+       controls against the defaults and then silently disagree with the
+       scene. */
+    applyHash();
     bind();
     resize();
     rebuild();

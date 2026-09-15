@@ -2,7 +2,7 @@
 
 Type a URL. It grows into an isometric voxel tree on a square plot. Tap the
 plot and the camera swings to straight-down, where the whole diorama reads as a
-scannable QR code.
+scannable QR (Quick Response) code.
 
 Two builds, same behaviour, same test suite:
 
@@ -37,7 +37,7 @@ The flip in motion — wind and petals at rest, decaying to exactly zero as the
 camera swings overhead. Also as video: [`docs/flip.mp4`](docs/flip.mp4)
 (one tree) and [`docs/seasons.mp4`](docs/seasons.mp4) (all four).
 
-A single tree at full size — `https://smaran.studio`, silhouette aspect 1.021:
+A single tree at full size — `https://smaran.studio`, silhouette aspect 0.952:
 
 ![Sakura](docs/sakura.png)
 
@@ -88,9 +88,9 @@ them was meant to fix. They are 0.52–0.82 of a module, which is enough side
 face to register as depth from the isometric view and changes nothing overhead.
 
 **Ground sits near 3.5:1, not the near-black 10:1 you first reach for.** The
-ground layer alone reproduces the matrix, so the instinct is to make it as
-dark as possible — but the floor is 2.45:1 and every stop past it is headroom
-spent on nothing, at the cost of a floor that competes with the tree.
+ground layer alone reproduces the matrix, so the instinct is to make it as dark
+as possible. The floor is 2.45:1. Every stop past it is headroom spent on
+nothing, bought at the cost of a floor that competes with the tree.
 
 **A dark module's area-weighted MEAN needs ≥2.45:1 against the paving — not
 every individual face.** A scanner thresholds a module; it never sees a voxel. See
@@ -175,22 +175,22 @@ There are **no lights in the WebGL scene at all**. Materials are
 `MeshBasicMaterial` with per-instance colour.
 
 Ordinary 3-D lighting does the exact opposite of what this design needs. A
-light from above makes top faces the *brightest* — and the top face is the
-only one a scanner sees, so brightening it walks foliage back up through the
-contrast floor and makes the code unscannable while still looking perfectly
-fine on screen. Here the top face carries the base tone and the two sides are baked
-darker, so every surface is exactly the value the audit checked.
+light from above makes top faces the *brightest*, and the top face is the only
+one a scanner sees. Brightening it walks foliage back up through the contrast
+floor, so the code stops scanning while still looking perfectly fine on screen.
+Here the top face carries the base tone and the two sides are baked darker, so
+every surface is exactly the value the audit checked.
 
 For the same reason the contrast check samples the **framebuffer**, never
 `material.color`.
 
 ### One InstancedMesh per face
 
-A 33x33 code carries 1,200–1,650 boxes. Each box shows at most three faces —
+A 33x33 code carries 1,200–1,650 boxes. Each box shows at most three faces:
 yaw stays in [0, 45] and pitch in [35, 90], so +x, +y and the underside are
-never front-facing — so there are three `InstancedMesh` objects over a
-single-quad geometry, one per face orientation, each carrying its own exact
-per-instance colour.
+never front-facing. That gives three `InstancedMesh` objects over a single-quad
+geometry, one per face orientation, each carrying its own exact per-instance
+colour.
 
 Three meshes rather than one is deliberate: `instanceColor` is one colour per
 instance, and each box needs three different tones. Splitting by face is what
@@ -226,9 +226,9 @@ Flat ground never overlaps anything standing on it, so it is painted wholesale
 before the sort — which lets it be cached to an offscreen canvas between
 frames. That cache matters, because wind forces a full redraw every frame.
 
-**These are artefacts of painter's-algorithm sorting and simply evaporate in
-the WebGL build**, where a depth buffer does the work — the slab is just one
-more instance there, there is no ground cache, and back-face culling is the GPU's
+**These are artefacts of painter's-algorithm sorting and evaporate in the
+WebGL build**, where a depth buffer does the work. The slab is one more
+instance there, there is no ground cache, and back-face culling is the GPU's
 job. Only coplanar z-fighting replaces them, handled by the gap between the
 slab top and the blocks seated on it.
 
@@ -316,8 +316,8 @@ from the bottom.
 
 **The bottom half is not optional.** A top-only shell was justified on the
 grounds that deeper leaves are occluded by the columns in front of them. That
-premise is false at 35° elevation — the columns in front were shelled away too,
-so nothing is left to do the occluding and you look straight under the dome and
+premise is false at 35° elevation. The columns in front were shelled away too,
+so nothing is left to do the occluding, and you look straight under the dome and
 out the other side. Measured on the sakura at n=25, the crown carried a 6.4
 module cap on a 16.9 module span and floated 5.45 modules above the trunk top.
 
@@ -366,9 +366,9 @@ locally, which is precisely why the fixed-threshold reconstruction test is the
 stricter canary and worth keeping strict.
 
 The shipped ladder is capped at +0.13 on the light side and runs to −0.32 on
-the dark, with weights re-solved so the area-weighted mean is unchanged — it
+the dark, with weights re-solved so the area-weighted mean is unchanged. It
 drifts by at most **0.009** across the six swatches. The module is exactly as
-dark as it was; it simply is not flat.
+dark as it was; it is no longer flat.
 
 | rung | offset | weight | ratio (rose) |
 |---|---|---|---|
@@ -474,9 +474,9 @@ difference between 3.2:1 and 5.4:1 is the difference between cherry blossom
 and dark wine.
 
 One second-order consequence is worth calling out, because it looks like a
-style choice and is not. With every top face forced dark, shading the side
-faces *lighter* — the obvious move — makes every leaf read as a dark cap on a
-pale stalk, and the crown looks like a field of mushrooms. Side faces are
+style choice and is not. With every top face forced dark, shading the side faces
+*lighter* is the obvious move. It makes every leaf read as a dark cap on a pale
+stalk, and the crown looks like a field of mushrooms. Side faces are
 exempt from the floor, so they are shaded **darker** than the tops instead,
 which restores ordinary top-lit form for free. The ginkgo keeps light sides,
 because its pale bark is the entire point of the species.
@@ -498,15 +498,16 @@ and everything else clears the floor by construction.
 
 ## The QR encoder
 
-Written from scratch: byte mode, versions 1–20, ECC L/M/Q/H. `src/qr.js`, no
-dependencies, runs in the browser and under Node.
+Written from scratch: byte mode, versions 1–20, ECC (error-correcting code)
+levels L/M/Q/H. `src/qr.js`, no dependencies, runs in the browser and under
+Node.
 
 Two traps that cost real time:
 
 **The Reed–Solomon generator polynomial is easy to build with its coefficients
-reversed.** It is symmetric at degree 1 — the answer is the single element
-`[1]` either way — so it looks correct until degree 2, where the right answer
-is `[3, 2]` and the reversed one is `[2, 3]`. `rsGeneratorSelfTest()` pins that
+reversed.** It is symmetric at degree 1: the answer is the single element `[1]`
+either way. So it looks correct until degree 2, where the right answer is
+`[3, 2]` and the reversed one is `[2, 3]`. `rsGeneratorSelfTest()` pins that
 case down and the harness asserts it.
 
 **Penalty rule 3** (the 1:1:3:1:1 finder lookalike) must scan
@@ -541,10 +542,10 @@ computes `8 - (length % 8)`, which yields 8 — a whole spurious zero byte — w
 the stream is already byte-aligned. In byte mode the stream is
 `4 + count + 8n` bits, which after a full 4-bit terminator is *always*
 aligned, so segno inserts that byte on **every** byte-mode symbol. The
-comparison runs with an opt-in `padQuirk` flag that reproduces it, which
-isolates the difference to exactly that byte and proves everything else — bit
+comparison runs with an opt-in `padQuirk` flag that reproduces it. That isolates
+the difference to exactly that byte and proves everything else is identical: bit
 stream, RS codewords, interleaving, module placement, masking, format and
-version info — is identical.
+version info.
 
 **Non-ASCII needs `encoding="utf-8"` on the segno side.** segno defaults byte
 mode to ISO-8859-1 when the text fits; we always emit UTF-8.
@@ -593,15 +594,15 @@ geometry checks      : 288 (no malformed faces)
 3. through camera    : 432/432 (100.0%)  (warp+blur+dim+noise+downscale)
 4. wind at t=1       : bit-identical across 3 clocks
    wind at t=0       : moving
-6. silhouette aspect : 24/24 in [0.80, 1.25]  range 0.893-1.183
-   per species        : ginkgo 1.17  oak 1.05  sakura 1.02  willow 0.91
-   spread             : 0.258 (min 0.22)
+6. silhouette aspect : 24/24 in [0.80, 1.25]  range 0.841-1.200
+   per species        : ginkgo 1.18  oak 1.03  sakura 0.96  willow 0.90
+   spread             : 0.277 (min 0.22)
 ```
 
 `canvas.html` scores identically on the same sweep, including the silhouette
-range to three decimal places — the two renderers share `qr.js`, `palette.js`
-and `scene.js` verbatim, so agreement there is a check that the metric measures
-the planting rather than the renderer.
+range to three decimal places. The two renderers share `qr.js`, `palette.js`
+and `scene.js` verbatim, so agreement there checks that the metric measures the
+planting rather than the renderer.
 
 The checks are:
 
@@ -623,13 +624,13 @@ The checks are:
 
    A band alone is not enough either: four species can all sit inside it and
    still be four sizes of the same shape. So the check also asserts the
-   **spread** across species is at least 0.22 — ginkgo 1.12, oak 1.00, sakura
-   0.97, willow 0.86 on the canvas build (spread 0.256), and ginkgo 1.17, oak
-   1.05, sakura 1.02, willow 0.91 on WebGL (0.258).
+   **spread** across species is at least 0.22 — ginkgo 1.13, oak 0.98, sakura
+   0.91, willow 0.85 on the canvas build (spread 0.278), and ginkgo 1.18, oak
+   1.03, sakura 0.96, willow 0.90 on WebGL (0.277).
 
    Tuning this against a handful of links is not enough. The matrix decides
    which columns near the crown apex survive carving, so the measurement varies
-   by payload — the ginkgo spread 0.136 across links, most of the band, and the
+   by payload. The ginkgo spread 0.136 across links, most of the band, and the
    one case that failed was a link absent from the tuning set. Where a species'
    apex was set by randomly placed clumps, the apex is now pinned to the trunk
    column, which is dark by construction; that cut the spread to 0.102.
@@ -637,10 +638,10 @@ The checks are:
    **This assertion is what caught the sweep not testing a species at all.** It
    failed at spread 0.144, which reads like a tuning miss. The cause was that
    `test_render.py` still named `gum`, a species that no longer exists, and
-   `scene.js` had a `PLANTERS[species] || plantOak` fallback — so the sweep
-   rendered a second oak, reported 100% on 144 combinations, and never touched
-   the ginkgo. Only the per-species breakdown gave it away; the overall range
-   was a healthy 0.893–1.062.
+   `scene.js` had a `PLANTERS[species] || plantOak` fallback. The sweep rendered
+   a second oak, reported 100% on 144 combinations, and never touched the
+   ginkgo. Only the per-species breakdown gave it away; the overall range was a
+   healthy 0.893–1.062.
 
    Both silent fallbacks now throw, in `scene.js` and in `palette.js`. A
    `|| default` on a lookup keyed by a name that appears in test fixtures is
@@ -658,9 +659,9 @@ The silhouette metric jittered by up to 0.11 between identical runs, and the
 two renderers disagreed by 0.15 on the same scene. Neither was the scene.
 
 `shoot()` was doing `renderAt` and `toDataURL` as two separate round trips, and
-both apps keep a `requestAnimationFrame` loop running — so a frame could
-repaint the canvas in between, at the wall clock rather than the clock asked
-for, and *with falling petals*. The capture is now a single evaluate.
+both apps keep a `requestAnimationFrame` loop running. A frame could repaint the
+canvas in between: at the wall clock rather than the clock asked for, and *with
+falling petals*. The capture is now a single evaluate.
 
 The renderer disagreement had a second cause: the WebGL test hook draws petals
 and the canvas one does not. The metric now discards connected components under

@@ -4,6 +4,11 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>QR Arboretum (WebGL)</title>
+<!-- Matches --page in each scheme. Without these the browser chrome stays
+     light while the page paints #17150f, which reads as a rendering fault
+     on mobile rather than a theme. -->
+<meta name="theme-color" content="#edeae3" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#17150f" media="(prefers-color-scheme: dark)">
 <meta name="description" content="Grow a URL into an isometric voxel tree that reads as a scannable QR code from directly overhead.">
 <style>
 /*__CSS__*/
@@ -13,7 +18,10 @@
 <div id="app">
   <header>
     <h1>QR Arboretum</h1>
-    <input id="url" type="url" spellcheck="false" autocomplete="off"
+    <!-- translate="no": the value is a machine identifier, and a page
+         translator rewriting it would silently encode a different link. -->
+    <input id="url" name="url" type="url" inputmode="url" spellcheck="false"
+           autocomplete="off" translate="no"
            placeholder="https://example.com" aria-label="URL to encode">
   </header>
 
@@ -43,6 +51,9 @@
 </script>
 <script>
 /*__SCENE__*/
+</script>
+<script>
+/*__PERMALINK__*/
 </script>
 <script>
 /*__RENDER__*/
