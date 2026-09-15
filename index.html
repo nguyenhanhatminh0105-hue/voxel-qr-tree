@@ -155,9 +155,30 @@ h1 {
 
 #url:focus { outline: 2px solid var(--focus); outline-offset: 1px; border-color: transparent; }
 
+/* The stage is SQUARE, and the page composes around it.
+
+   It used to be a 1fr grid row, so its shape was whatever the header and footer
+   left over - 1072x716 on a laptop - while the diorama it holds is square and
+   the camera must show a 4-module quiet zone on every side. The art therefore
+   filled 52% of the width and 74% of the height: a small picture in a large
+   beige box, and worst on mobile code view, where the scannable code rendered
+   at 285px on a 390px screen with ~290px of empty stage around it.
+
+   Making the frame match the subject reclaims that space instead of letting the
+   camera stretch into it. Nothing about the projection changes, so the quiet
+   zone and every measured contrast stay exactly as verified. */
 #stagewrap {
   position: relative;
   min-height: 0;
+  /* Height comes from the grid row (align-self stays `stretch`); width follows
+     from the ratio. justify-self: center stops the row stretching it wide
+     again, and max-width clamps it on a portrait viewport where a square as
+     tall as the row would not fit across. */
+  height: 100%;
+  aspect-ratio: 1 / 1;
+  width: auto;
+  max-width: 100%;
+  justify-self: center;
   border: 1px solid var(--line);
   border-radius: 14px;
   overflow: hidden;
@@ -167,6 +188,23 @@ h1 {
 /* -webkit-tap-highlight-color: the plot IS the artwork, and the UA default
    flashes a translucent slab across it on every tap. Set to transparent
    deliberately, not left to the UA - the flip animation is the feedback. */
+/* Which dimension binds depends on the shape of the viewport, and CSS cannot
+   compare the grid row's height to the container's width on its own. In
+   landscape the row is the shorter side, so height drives and width follows;
+   in portrait the container is narrower than the row is tall, so width drives
+   and the reclaimed height goes to the controls instead of to empty stage. */
+@media (orientation: portrait) {
+  #stagewrap {
+    width: 100%;
+    height: auto;
+    max-height: 100%;
+    /* Centred in the row rather than pinned to its top: a square stage in a
+       taller row leaves slack either way, and splitting it reads as breathing
+       room, where collecting it all under the plot read as an unfinished page. */
+    align-self: center;
+  }
+}
+
 #stage {
   display: block;
   cursor: pointer;
@@ -7320,8 +7358,13 @@ void main() {
   // --- UI ---------------------------------------------------------------
   function resize() {
     var rect = document.getElementById('stagewrap').getBoundingClientRect();
-    W = Math.max(240, Math.floor(rect.width));
-    H = Math.max(240, Math.floor(rect.height));
+    /* Match the stage exactly. A 240px floor here could exceed the element it
+       is drawing into - on a 320px phone the stage is 236px tall, the canvas
+       was forced to 240, and `overflow: hidden` sheared the bottom vertex off
+       the plot. A floor that can be larger than its own container is always
+       wrong; guard against zero instead. */
+    W = Math.max(1, Math.floor(rect.width));
+    H = Math.max(1, Math.floor(rect.height));
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     renderer.setSize(W, H, true);
   }
@@ -7446,6 +7489,16 @@ void main() {
       confirmSave(name);
     });
     window.addEventListener('resize', resize);
+    /* The stage is sized by aspect-ratio against the grid row, so it changes
+       shape during layout - on a rotate, on a font swap, when the reserved
+       status row wraps - without the window ever firing `resize`. The canvas
+       then keeps its old backing size and `overflow: hidden` crops the plot,
+       which is what sheared the bottom off the slab on a 320px screen. Watch
+       the element itself rather than the window. */
+    if (window.ResizeObserver) {
+      var ro = new ResizeObserver(function () { resize(); });
+      ro.observe(document.getElementById('stagewrap'));
+    }
   }
 
   /* A hash is visitor input, so nothing from it reaches the planter unchecked:

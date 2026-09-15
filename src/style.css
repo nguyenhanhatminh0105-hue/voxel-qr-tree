@@ -124,9 +124,30 @@ h1 {
 
 #url:focus { outline: 2px solid var(--focus); outline-offset: 1px; border-color: transparent; }
 
+/* The stage is SQUARE, and the page composes around it.
+
+   It used to be a 1fr grid row, so its shape was whatever the header and footer
+   left over - 1072x716 on a laptop - while the diorama it holds is square and
+   the camera must show a 4-module quiet zone on every side. The art therefore
+   filled 52% of the width and 74% of the height: a small picture in a large
+   beige box, and worst on mobile code view, where the scannable code rendered
+   at 285px on a 390px screen with ~290px of empty stage around it.
+
+   Making the frame match the subject reclaims that space instead of letting the
+   camera stretch into it. Nothing about the projection changes, so the quiet
+   zone and every measured contrast stay exactly as verified. */
 #stagewrap {
   position: relative;
   min-height: 0;
+  /* Height comes from the grid row (align-self stays `stretch`); width follows
+     from the ratio. justify-self: center stops the row stretching it wide
+     again, and max-width clamps it on a portrait viewport where a square as
+     tall as the row would not fit across. */
+  height: 100%;
+  aspect-ratio: 1 / 1;
+  width: auto;
+  max-width: 100%;
+  justify-self: center;
   border: 1px solid var(--line);
   border-radius: 14px;
   overflow: hidden;
@@ -136,6 +157,23 @@ h1 {
 /* -webkit-tap-highlight-color: the plot IS the artwork, and the UA default
    flashes a translucent slab across it on every tap. Set to transparent
    deliberately, not left to the UA - the flip animation is the feedback. */
+/* Which dimension binds depends on the shape of the viewport, and CSS cannot
+   compare the grid row's height to the container's width on its own. In
+   landscape the row is the shorter side, so height drives and width follows;
+   in portrait the container is narrower than the row is tall, so width drives
+   and the reclaimed height goes to the controls instead of to empty stage. */
+@media (orientation: portrait) {
+  #stagewrap {
+    width: 100%;
+    height: auto;
+    max-height: 100%;
+    /* Centred in the row rather than pinned to its top: a square stage in a
+       taller row leaves slack either way, and splitting it reads as breathing
+       room, where collecting it all under the plot read as an unfinished page. */
+    align-self: center;
+  }
+}
+
 #stage {
   display: block;
   cursor: pointer;

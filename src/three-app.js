@@ -557,8 +557,13 @@
   // --- UI ---------------------------------------------------------------
   function resize() {
     var rect = document.getElementById('stagewrap').getBoundingClientRect();
-    W = Math.max(240, Math.floor(rect.width));
-    H = Math.max(240, Math.floor(rect.height));
+    /* Match the stage exactly. A 240px floor here could exceed the element it
+       is drawing into - on a 320px phone the stage is 236px tall, the canvas
+       was forced to 240, and `overflow: hidden` sheared the bottom vertex off
+       the plot. A floor that can be larger than its own container is always
+       wrong; guard against zero instead. */
+    W = Math.max(1, Math.floor(rect.width));
+    H = Math.max(1, Math.floor(rect.height));
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     renderer.setSize(W, H, true);
   }
@@ -683,6 +688,16 @@
       confirmSave(name);
     });
     window.addEventListener('resize', resize);
+    /* The stage is sized by aspect-ratio against the grid row, so it changes
+       shape during layout - on a rotate, on a font swap, when the reserved
+       status row wraps - without the window ever firing `resize`. The canvas
+       then keeps its old backing size and `overflow: hidden` crops the plot,
+       which is what sheared the bottom off the slab on a 320px screen. Watch
+       the element itself rather than the window. */
+    if (window.ResizeObserver) {
+      var ro = new ResizeObserver(function () { resize(); });
+      ro.observe(document.getElementById('stagewrap'));
+    }
   }
 
   /* A hash is visitor input, so nothing from it reaches the planter unchecked:
