@@ -65,14 +65,15 @@ def zbar_decode(img):
         out.append(r.data)
         # ZBar has already transcoded the payload using whatever charset it
         # guessed (Shift-JIS is its default for QR, since the format is
-        # Japanese in origin). Undo the plausible guesses so we can compare the
+        # Japanese in origin; Ubuntu's libzbar0 guesses Big5 for the same
+        # bytes). Undo the plausible guesses so we can compare the
         # bytes we actually encoded. Real apps avoid this ambiguity with an ECI
         # header; ASCII URLs - the entire point of this app - never hit it.
         try:
             txt = r.data.decode("utf-8")
         except UnicodeDecodeError:
             continue
-        for cs in ("shift-jis", "latin-1", "cp932"):
+        for cs in ("shift-jis", "latin-1", "cp932", "big5"):
             try:
                 out.append(txt.encode(cs))
             except (UnicodeEncodeError, LookupError):
