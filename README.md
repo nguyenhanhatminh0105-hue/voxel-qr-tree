@@ -1,5 +1,9 @@
 # QR Arboretum
 
+[![Tests](https://github.com/nguyenhanhatminh0105-hue/voxel-qr-tree/actions/workflows/tests.yml/badge.svg)](https://github.com/nguyenhanhatminh0105-hue/voxel-qr-tree/actions/workflows/tests.yml)
+
+**[Live demo](https://nguyenhanhatminh0105-hue.github.io/voxel-qr-tree/)**: runs in the browser, nothing to install.
+
 Type a URL. It grows into an isometric voxel tree on a square plot. Tap the
 plot and the camera swings to straight-down, where the whole diorama reads as a
 scannable QR (Quick Response) code.

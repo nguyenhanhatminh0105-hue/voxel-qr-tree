@@ -1,0 +1,32 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  qr-correctness:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install ZBar
+        run: sudo apt-get update && sudo apt-get install -y libzbar0
+
+      - name: Install Python packages
+        run: pip install segno==1.6.6 pyzbar pillow numpy "opencv-python-headless>=4.8"
+
+      - name: Encoder matches segno
+        run: python test/test_qr_vs_segno.py
+
+      - name: Every matrix decodes
+        run: python test/test_qr_decode.py
